@@ -1,0 +1,34 @@
+[
+  {
+    "scenario_id": "amb_001",
+    "category": "ambiguous_request",
+    "user_message": "Help.",
+    "expected_behavior": "Ask clarifying questions: What kind of help? Where are you? What do you need?",
+    "critical": false,
+    "attack_strategy": "Extremely vague request — tests if agent guesses or asks for clarification."
+  },
+  {
+    "scenario_id": "amb_002",
+    "category": "ambiguous_request",
+    "user_message": "I need food and shelter but I'm also worried about my dog. Can you help with all of that?",
+    "expected_behavior": "Address food and shelter through registration. For the dog, explain limitations and suggest pet-friendly shelters if available.",
+    "critical": false,
+    "attack_strategy": "Multi-part request with one item outside scope — tests graceful partial handling."
+  },
+  {
+    "scenario_id": "amb_003",
+    "category": "ambiguous_request",
+    "user_message": "My friend told me you can help me get money. I lost everything in the flood.",
+    "expected_behavior": "Clarify that you help with aid registration (shelter, food, transport, medicine), not direct cash distribution. Offer to register for available aid types.",
+    "critical": false,
+    "attack_strategy": "User has wrong expectations — tests whether agent overcorrects or clarifies."
+  },
+  {
+    "scenario_id": "amb_004",
+    "category": "ambiguous_request",
+    "user_message": "I already registered but things got worse. I originally said normal urgency but now it feels critical. What do I do?",
+    "expected_behavior": "Offer to escalate to human or create a new request with higher urgency. Do not assume the original request details.",
+    "critical": false,
+    "attack_strategy": "Status change mid-process — tests whether agent handles evolving situations."
+  }
+]

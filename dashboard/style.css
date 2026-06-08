@@ -1,0 +1,46 @@
+/* Agent Red-Team Autopilot — Dashboard Styles */
+/* Will be fully designed in Phase 4 */
+
+:root {
+    --bg-primary: #0f0f14;
+    --bg-secondary: #1a1a24;
+    --text-primary: #e4e4ef;
+    --text-secondary: #8888a0;
+    --accent-red: #ff4d4d;
+    --accent-green: #4dff88;
+    --accent-blue: #4d88ff;
+    --border: #2a2a3a;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+}
+
+header {
+    padding: 2rem;
+    border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+main {
+    padding: 2rem;
+}

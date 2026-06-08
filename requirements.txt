@@ -1,0 +1,22 @@
+# FastAPI backend
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# Google Cloud
+google-cloud-aiplatform>=1.60.0
+google-generativeai>=0.8.0
+
+# Arize Phoenix
+arize-phoenix>=5.0.0
+arize-phoenix-otel>=0.6.0
+openinference-instrumentation-vertexai>=2.0.0
+
+# Phoenix MCP client
+httpx>=0.27.0
+
+# Utilities
+python-dateutil>=2.9.0
+uuid6>=2024.1.12
+pandas>=2.0.0
