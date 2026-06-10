@@ -100,11 +100,14 @@ app.include_router(router, prefix="/tools", tags=["Tools"])
 
 # ── MCP Server (Streamable HTTP for Google Agent Builder) ──────────
 # Agent Builder connects to /mcp to discover and call tools
-mcp_app = mcp_server.streamable_http_app()
-for route in mcp_app.routes:
-    if hasattr(route, "methods"):
-        route.methods = None
-app.mount("/mcp", mcp_app)
+from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+
+# Initialize the session manager (created lazily inside streamable_http_app)
+_ = mcp_server.streamable_http_app()
+
+mcp_asgi_app = StreamableHTTPASGIApp(mcp_server.session_manager)
+app.add_route("/mcp", mcp_asgi_app, methods=["GET", "POST", "DELETE"])
+app.add_route("/mcp/", mcp_asgi_app, methods=["GET", "POST", "DELETE"])
 
 
 # ── Health Check (outside /tools so load balancers can reach it) ────
