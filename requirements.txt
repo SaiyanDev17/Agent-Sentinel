@@ -11,7 +11,7 @@ google-generativeai>=0.8.0
 # Arize Phoenix
 arize-phoenix>=5.0.0
 arize-phoenix-otel>=0.6.0
-openinference-instrumentation-vertexai>=2.0.0
+openinference-instrumentation-vertexai>=0.1.0
 
 # Phoenix MCP client
 httpx>=0.27.0
