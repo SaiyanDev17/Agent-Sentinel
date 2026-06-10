@@ -585,3 +585,103 @@ body {
     .stats-cards-wrapper { grid-template-columns: 1fr; }
     .heatmap { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Page Navigation and Dynamic Configuration Utilities */
+.hidden-page {
+    display: none !important;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.form-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.form-control {
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 0.6rem 0.95rem;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: inherit;
+    outline: none;
+    transition: var(--transition-smooth);
+}
+
+.form-control:focus {
+    border-color: var(--accent-blue);
+    background-color: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.15);
+}
+
+.config-body {
+    transition: var(--transition-smooth);
+}
+
+.config-card.collapsed .config-body {
+    display: none;
+}
+
+.config-header {
+    cursor: pointer;
+}
+
+.config-toggle-icon {
+    font-size: 0.9rem;
+    transition: transform 0.3s ease;
+}
+
+.config-card.collapsed .config-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.btn-actions-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Console Animations & Styling */
+.animate-pulse {
+    animation: pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: .4;
+    }
+}
+
+.terminal-log span.system { color: #38bdf8; }
+.terminal-log span.generator { color: #c084fc; }
+.terminal-log span.agent { color: #60a5fa; }
+.terminal-log span.judge { color: #eab308; }
+.terminal-log span.success { color: #34d399; font-weight: bold; }
+.terminal-log span.fail { color: #f87171; font-weight: bold; }
+
+

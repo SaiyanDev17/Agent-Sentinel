@@ -30,10 +30,10 @@
             </div>
             
             <nav class="nav-links">
-                <a href="#overview" class="nav-item active"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
-                <a href="#test-results" class="nav-item"><i class="fa-solid fa-vial-virus"></i> Test Suite</a>
-                <a href="#approval-queue" class="nav-item"><i class="fa-solid fa-user-shield"></i> Approval Gate <span class="badge-count" id="nav-approval-count">0</span></a>
-                <a href="#live-logs" class="nav-item"><i class="fa-solid fa-database"></i> Live Database</a>
+                <a href="#overview" class="nav-item active" id="nav-overview"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
+                <a href="#test-results" class="nav-item" id="nav-suite"><i class="fa-solid fa-vial-virus"></i> Test Suite</a>
+                <a href="#approval-queue" class="nav-item" id="nav-approvals"><i class="fa-solid fa-user-shield"></i> Approval Gate <span class="badge-count" id="nav-approval-count">0</span></a>
+                <a href="#live-logs" class="nav-item" id="nav-logs"><i class="fa-solid fa-database"></i> Live Database</a>
             </nav>
             
             <div class="target-agent-card">
@@ -61,214 +61,263 @@
                         <i class="fa-solid fa-circle-check"></i> <span id="system-gate-text">Initializing</span>
                     </div>
                     <button class="btn btn-success" id="btn-run-tests" style="margin-right: 0.5rem;"><i class="fa-solid fa-play"></i> Run Safety Tests</button>
+                    <button class="btn btn-danger" id="btn-reset" style="margin-right: 0.5rem;"><i class="fa-solid fa-trash-can"></i> Reset Console</button>
                     <button class="btn btn-primary" id="btn-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh Console</button>
                 </div>
             </header>
 
-            <!-- Metrics Hero Grid -->
-            <section class="metrics-grid">
-                <!-- Gauge Card -->
-                <div class="card glass gauge-card">
+            <!-- Page 1: Overview -->
+            <div id="page-overview" class="spa-page">
+                <!-- GCP Configuration Override Card -->
+                <div class="card glass config-card mb-6" id="config-panel">
+                    <div class="card-header config-header" id="config-header">
+                        <h3><i class="fa-solid fa-gear"></i> GCP Agent Configuration Overrides</h3>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-indigo-400 font-semibold uppercase tracking-wider" id="config-status-label">Using Environment Defaults</span>
+                            <i class="fa-solid fa-chevron-down config-toggle-icon"></i>
+                        </div>
+                    </div>
+                    <div class="config-body p-6 border-t border-[var(--card-border)]" id="config-fields">
+                        <div class="config-grid">
+                            <div class="form-group">
+                                <label for="input-project-id" class="form-label">GCP Project ID</label>
+                                <input type="text" id="input-project-id" class="form-control" placeholder="e.g. agent-sentinel-498916">
+                            </div>
+                            <div class="form-group">
+                                <label for="input-location" class="form-label">GCP Location</label>
+                                <input type="text" id="input-location" class="form-control" placeholder="e.g. us-central1">
+                            </div>
+                            <div class="form-group">
+                                <label for="input-agent-id" class="form-label">Dialogflow CX Agent ID</label>
+                                <input type="text" id="input-agent-id" class="form-control" placeholder="e.g. agent_1781027265714">
+                            </div>
+                        </div>
+                        <div class="form-group mt-4" style="margin-top: 1rem;">
+                            <label for="input-agent-description" class="form-label">Target Agent Persona / Instructions (For Custom Scenarios)</label>
+                            <textarea id="input-agent-description" class="form-control" rows="3" style="resize: vertical; min-height: 80px;" placeholder="Describe what the agent does (e.g. 'A retail shop assistant that answers order and refund queries') to dynamically generate domain-specific safety tests. Leave blank to run the default disaster-aid test cases."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Hero Grid -->
+                <section class="metrics-grid">
+                    <!-- Gauge Card -->
+                    <div class="card glass gauge-card">
+                        <div class="card-header">
+                            <h3>Release Readiness</h3>
+                            <i class="fa-solid fa-gauge-high"></i>
+                        </div>
+                        <div class="gauge-container">
+                            <svg class="gauge" viewBox="0 0 100 100">
+                                <circle class="gauge-bg" cx="50" cy="50" r="40"></circle>
+                                <circle class="gauge-fill" id="readiness-fill" cx="50" cy="50" r="40" style="stroke-dasharray: 251.2; stroke-dashoffset: 251.2;"></circle>
+                            </svg>
+                            <div class="gauge-value" id="readiness-score">0%</div>
+                        </div>
+                        <div class="gauge-footer" id="readiness-desc">
+                            Awaiting test results...
+                        </div>
+                    </div>
+
+                    <!-- Stats Cards -->
+                    <div class="stats-cards-wrapper">
+                        <!-- Total Tests -->
+                        <div class="card glass stat-card">
+                            <div class="stat-icon blue"><i class="fa-solid fa-list-check"></i></div>
+                            <div class="stat-details">
+                                <span class="stat-label">Total Test Cases</span>
+                                <h2 class="stat-value" id="stat-total-tests">0</h2>
+                                <span class="stat-sub" id="stat-passed-ratio">0 passed</span>
+                            </div>
+                        </div>
+
+                        <!-- Critical Failures -->
+                        <div class="card glass stat-card">
+                            <div class="stat-icon red" id="stat-fail-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div class="stat-details">
+                                <span class="stat-label">Critical Vulnerabilities</span>
+                                <h2 class="stat-value" id="stat-critical-failures">0</h2>
+                                <span class="stat-sub" id="stat-fail-sub">0 prompt / 0 privacy</span>
+                            </div>
+                        </div>
+
+                        <!-- Running Instances -->
+                        <div class="card glass stat-card">
+                            <div class="stat-icon green"><i class="fa-solid fa-network-wired"></i></div>
+                            <div class="stat-details">
+                                <span class="stat-label">Simulated Live Traffic</span>
+                                <h2 class="stat-value" id="stat-live-requests">0</h2>
+                                <span class="stat-sub" id="stat-escalation-ratio">0 escalations</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="split-layout">
+                    <!-- Left Column: Heatmap -->
+                    <div class="layout-column col-main">
+                        <!-- Failure Heatmap -->
+                        <div class="card glass">
+                            <div class="card-header">
+                                <h3>Vulnerability Category Heatmap</h3>
+                                <i class="fa-solid fa-fire"></i>
+                            </div>
+                            <div class="heatmap" id="vulnerability-heatmap">
+                                <!-- Heatmap cells will be rendered dynamically -->
+                                <div class="heatmap-cell" data-cat="prompt_injection">
+                                    <span class="cell-title">Prompt Injection</span>
+                                    <div class="cell-score" id="heatmap-prompt_injection">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                                <div class="heatmap-cell" data-cat="privacy">
+                                    <span class="cell-title">Data Leakage</span>
+                                    <div class="cell-score" id="heatmap-privacy">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                                <div class="heatmap-cell" data-cat="unsafe_tool_call">
+                                    <span class="cell-title">Unsafe Tools</span>
+                                    <div class="cell-score" id="heatmap-unsafe_tool_call">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                                <div class="heatmap-cell" data-cat="missing_escalation">
+                                    <span class="cell-title">Missing Escalation</span>
+                                    <div class="cell-score" id="heatmap-missing_escalation">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                                <div class="heatmap-cell" data-cat="hallucination">
+                                    <span class="cell-title">Hallucination</span>
+                                    <div class="cell-score" id="heatmap-hallucination">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                                <div class="heatmap-cell" data-cat="ambiguous_request">
+                                    <span class="cell-title">Ambiguity handling</span>
+                                    <div class="cell-score" id="heatmap-ambiguous_request">0%</div>
+                                    <span class="cell-status">N/A</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Comparisons -->
+                    <div class="layout-column col-sidebar">
+                        <!-- Before/After Experiment Comparisons -->
+                        <div class="card glass">
+                            <div class="card-header">
+                                <h3>Pre vs. Post Mitigation Comparison</h3>
+                                <i class="fa-solid fa-code-compare"></i>
+                            </div>
+                            <div class="comparison-panel">
+                                <div class="comparison-bar-row">
+                                    <span class="comparison-label">Safety & Security (Jailbreaks)</span>
+                                    <div class="comparison-bar-container">
+                                        <div class="comp-bar before" style="width: 72%;">72%</div>
+                                        <div class="comp-bar after" style="width: 95%;">95%</div>
+                                    </div>
+                                </div>
+                                <div class="comparison-bar-row">
+                                    <span class="comparison-label">PII & Privacy Protection</span>
+                                    <div class="comparison-bar-container">
+                                        <div class="comp-bar before" style="width: 85%;">85%</div>
+                                        <div class="comp-bar after" style="width: 100%;">100%</div>
+                                    </div>
+                                </div>
+                                <div class="comparison-bar-row">
+                                    <span class="comparison-label">Emergency Escalation Accuracy</span>
+                                    <div class="comparison-bar-container">
+                                        <div class="comp-bar before" style="width: 60%;">60%</div>
+                                        <div class="comp-bar after" style="width: 90%;">90%</div>
+                                    </div>
+                                </div>
+                                <div class="comparison-legend">
+                                    <span class="legend-item"><span class="dot before"></span> Round 1 (Unmitigated)</span>
+                                    <span class="legend-item"><span class="dot after"></span> Round 2 (Post-Approval Patch)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page 2: Test Suite -->
+            <div id="page-suite" class="spa-page hidden-page">
+                <!-- Action row for Exporting/Reporting -->
+                <div class="btn-actions-row">
+                    <button class="btn btn-primary" id="btn-export-csv"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+                    <button class="btn btn-primary" id="btn-print-pdf"><i class="fa-solid fa-file-pdf"></i> Print PDF Report</button>
+                </div>
+
+                <!-- Test Suite Results -->
+                <div class="card glass" id="test-results" style="margin-bottom: 0;">
+                    <div class="card-header flex">
+                        <div>
+                            <h3>Adversarial Evaluation Run History</h3>
+                            <p class="card-subtitle">Detailed audit of jailbreak attempts, PII leak probes, and tool usage compliance.</p>
+                        </div>
+                        <div class="search-box">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="search-tests" placeholder="Filter by scenario ID or content...">
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="data-table" id="table-test-results">
+                            <thead>
+                                <tr>
+                                    <th>Scenario ID</th>
+                                    <th>Category</th>
+                                    <th>Status</th>
+                                    <th>Eval Details</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-test-results">
+                                <!-- Dynamic rows -->
+                                <tr class="empty-state">
+                                    <td colspan="5">
+                                        <i class="fa-solid fa-clipboard-list empty-icon"></i>
+                                        <p>No evaluation runs detected. Execute a safety test from the QA Commander in Agent Builder.</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page 3: Approvals -->
+            <div id="page-approvals" class="spa-page hidden-page">
+                <!-- Human Approval Queue -->
+                <div class="card glass" id="approval-queue" style="margin-bottom: 0;">
                     <div class="card-header">
-                        <h3>Release Readiness</h3>
-                        <i class="fa-solid fa-gauge-high"></i>
+                        <h3>Human-in-the-loop Approval Queue</h3>
+                        <i class="fa-solid fa-user-shield"></i>
                     </div>
-                    <div class="gauge-container">
-                        <svg class="gauge" viewBox="0 0 100 100">
-                            <circle class="gauge-bg" cx="50" cy="50" r="40"></circle>
-                            <circle class="gauge-fill" id="readiness-fill" cx="50" cy="50" r="40" style="stroke-dasharray: 251.2; stroke-dashoffset: 251.2;"></circle>
-                        </svg>
-                        <div class="gauge-value" id="readiness-score">0%</div>
-                    </div>
-                    <div class="gauge-footer" id="readiness-desc">
-                        Awaiting test results...
-                    </div>
-                </div>
-
-                <!-- Stats Cards -->
-                <div class="stats-cards-wrapper">
-                    <!-- Total Tests -->
-                    <div class="card glass stat-card">
-                        <div class="stat-icon blue"><i class="fa-solid fa-list-check"></i></div>
-                        <div class="stat-details">
-                            <span class="stat-label">Total Test Cases</span>
-                            <h2 class="stat-value" id="stat-total-tests">0</h2>
-                            <span class="stat-sub" id="stat-passed-ratio">0 passed</span>
-                        </div>
-                    </div>
-
-                    <!-- Critical Failures -->
-                    <div class="card glass stat-card">
-                        <div class="stat-icon red" id="stat-fail-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-                        <div class="stat-details">
-                            <span class="stat-label">Critical Vulnerabilities</span>
-                            <h2 class="stat-value" id="stat-critical-failures">0</h2>
-                            <span class="stat-sub" id="stat-fail-sub">0 prompt / 0 privacy</span>
-                        </div>
-                    </div>
-
-                    <!-- Running Instances -->
-                    <div class="card glass stat-card">
-                        <div class="stat-icon green"><i class="fa-solid fa-network-wired"></i></div>
-                        <div class="stat-details">
-                            <span class="stat-label">Simulated Live Traffic</span>
-                            <h2 class="stat-value" id="stat-live-requests">0</h2>
-                            <span class="stat-sub" id="stat-escalation-ratio">0 escalations</span>
+                    <div class="approvals-list" id="approvals-container">
+                        <!-- Dynamic Cards -->
+                        <div class="empty-state mini">
+                            <p><i class="fa-solid fa-circle-check"></i> Queue is empty. No prompt patches pending approval.</p>
                         </div>
                     </div>
                 </div>
-            </section>
+            </div>
 
-            <!-- Dashboard Split Layout -->
-            <div class="split-layout">
-                <!-- Left Column: Test Suites & Heatmap -->
-                <div class="layout-column col-main">
-                    <!-- Failure Heatmap -->
-                    <div class="card glass">
-                        <div class="card-header">
-                            <h3>Vulnerability Category Heatmap</h3>
-                            <i class="fa-solid fa-fire"></i>
-                        </div>
-                        <div class="heatmap" id="vulnerability-heatmap">
-                            <!-- Heatmap cells will be rendered dynamically -->
-                            <div class="heatmap-cell" data-cat="prompt_injection">
-                                <span class="cell-title">Prompt Injection</span>
-                                <div class="cell-score" id="heatmap-prompt_injection">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                            <div class="heatmap-cell" data-cat="privacy">
-                                <span class="cell-title">Data Leakage</span>
-                                <div class="cell-score" id="heatmap-privacy">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                            <div class="heatmap-cell" data-cat="unsafe_tool_call">
-                                <span class="cell-title">Unsafe Tools</span>
-                                <div class="cell-score" id="heatmap-unsafe_tool_call">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                            <div class="heatmap-cell" data-cat="missing_escalation">
-                                <span class="cell-title">Missing Escalation</span>
-                                <div class="cell-score" id="heatmap-missing_escalation">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                            <div class="heatmap-cell" data-cat="hallucination">
-                                <span class="cell-title">Hallucination</span>
-                                <div class="cell-score" id="heatmap-hallucination">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                            <div class="heatmap-cell" data-cat="ambiguous_request">
-                                <span class="cell-title">Ambiguity handling</span>
-                                <div class="cell-score" id="heatmap-ambiguous_request">0%</div>
-                                <span class="cell-status">N/A</span>
-                            </div>
-                        </div>
+            <!-- Page 4: Live Logs -->
+            <div id="page-logs" class="spa-page hidden-page">
+                <!-- Simulated Live Database Feed -->
+                <div class="card glass" id="live-logs" style="margin-bottom: 0;">
+                    <div class="card-header flex">
+                        <h3>AidAssist Database Activity</h3>
+                        <span class="pulse-icon"><span class="pulse-dot"></span> LIVE</span>
                     </div>
-
-                    <!-- Test Suite Results -->
-                    <div class="card glass" id="test-results">
-                        <div class="card-header flex">
-                            <div>
-                                <h3>Adversarial Evaluation Run History</h3>
-                                <p class="card-subtitle">Detailed audit of jailbreak attempts, PII leak probes, and tool usage compliance.</p>
-                            </div>
-                            <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="search-tests" placeholder="Filter by scenario ID or content...">
-                            </div>
+                    <div class="logs-container">
+                        <div class="tab-buttons">
+                            <button class="tab-btn active" id="tab-requests">Aid Requests</button>
+                            <button class="tab-btn" id="tab-tickets">Escalations</button>
                         </div>
-                        <div class="table-wrapper">
-                            <table class="data-table" id="table-test-results">
-                                <thead>
-                                    <tr>
-                                        <th>Scenario ID</th>
-                                        <th>Category</th>
-                                        <th>Status</th>
-                                        <th>Eval Details</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="tbody-test-results">
-                                    <!-- Dynamic rows -->
-                                    <tr class="empty-state">
-                                        <td colspan="5">
-                                            <i class="fa-solid fa-clipboard-list empty-icon"></i>
-                                            <p>No evaluation runs detected. Execute a safety test from the QA Commander in Agent Builder.</p>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Right Column: Approvals and Live Data Feed -->
-                <div class="layout-column col-sidebar">
-                    <!-- Human Approval Queue -->
-                    <div class="card glass" id="approval-queue">
-                        <div class="card-header">
-                            <h3>Human-in-the-loop Approval Queue</h3>
-                            <i class="fa-solid fa-user-shield"></i>
-                        </div>
-                        <div class="approvals-list" id="approvals-container">
-                            <!-- Dynamic Cards -->
-                            <div class="empty-state mini">
-                                <p><i class="fa-solid fa-circle-check"></i> Queue is empty. No prompt patches pending approval.</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Before/After Experiment Comparisons -->
-                    <div class="card glass">
-                        <div class="card-header">
-                            <h3>Pre vs. Post Mitigation Comparison</h3>
-                            <i class="fa-solid fa-code-compare"></i>
-                        </div>
-                        <div class="comparison-panel">
-                            <div class="comparison-bar-row">
-                                <span class="comparison-label">Safety & Security (Jailbreaks)</span>
-                                <div class="comparison-bar-container">
-                                    <div class="comp-bar before" style="width: 72%;">72%</div>
-                                    <div class="comp-bar after" style="width: 95%;">95%</div>
-                                </div>
-                            </div>
-                            <div class="comparison-bar-row">
-                                <span class="comparison-label">PII & Privacy Protection</span>
-                                <div class="comparison-bar-container">
-                                    <div class="comp-bar before" style="width: 85%;">85%</div>
-                                    <div class="comp-bar after" style="width: 100%;">100%</div>
-                                </div>
-                            </div>
-                            <div class="comparison-bar-row">
-                                <span class="comparison-label">Emergency Escalation Accuracy</span>
-                                <div class="comparison-bar-container">
-                                    <div class="comp-bar before" style="width: 60%;">60%</div>
-                                    <div class="comp-bar after" style="width: 90%;">90%</div>
-                                </div>
-                            </div>
-                            <div class="comparison-legend">
-                                <span class="legend-item"><span class="dot before"></span> Round 1 (Unmitigated)</span>
-                                <span class="legend-item"><span class="dot after"></span> Round 2 (Post-Approval Patch)</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Simulated Live Database Feed -->
-                    <div class="card glass" id="live-logs">
-                        <div class="card-header flex">
-                            <h3>AidAssist Database Activity</h3>
-                            <span class="pulse-icon"><span class="pulse-dot"></span> LIVE</span>
-                        </div>
-                        <div class="logs-container">
-                            <div class="tab-buttons">
-                                <button class="tab-btn active" id="tab-requests">Aid Requests</button>
-                                <button class="tab-btn" id="tab-tickets">Escalations</button>
-                            </div>
-                            <div class="tab-content">
-                                <ul class="activity-feed" id="feed-container">
-                                    <!-- Dynamic feed logs -->
-                                    <li class="empty-feed">No data records found.</li>
-                                </ul>
-                            </div>
+                        <div class="tab-content">
+                            <ul class="activity-feed" id="feed-container">
+                                <!-- Dynamic feed logs -->
+                                <li class="empty-feed">No data records found.</li>
+                            </ul>
                         </div>
                     </div>
                 </div>
@@ -303,6 +352,38 @@
                     <h4>Phoenix Executed Spans:</h4>
                     <div class="spans-timeline" id="modal-spans-list">
                         <!-- Dynamic span timelines -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Modal -->
+    <div class="modal-overlay" id="modal-progress">
+        <div class="modal glass" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-gauge-high"></i> AI Agent Safety Scan</h2>
+                <button class="modal-close" id="btn-close-progress" style="display: none;"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" style="gap: 1.5rem;">
+                <div class="progress-status-container flex justify-between items-center" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="status-info">
+                        <span class="text-xs text-secondary font-semibold uppercase tracking-wider block" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Scan Progress</span>
+                        <h3 class="text-lg font-bold" id="progress-status-text" style="font-size: 1.1rem; font-weight: 700;">Initializing scans...</h3>
+                    </div>
+                    <div class="active-agent-badge" id="progress-active-agent" style="padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; background-color: rgba(59, 130, 246, 0.1); color: var(--accent-blue); display: flex; align-items: center; gap: 0.5rem;">
+                        <i class="fa-solid fa-robot animate-pulse"></i> Red-Team Generator
+                    </div>
+                </div>
+
+                <div class="progress-bar-container" style="width: 100%; height: 8px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; overflow: hidden; border: 1px solid var(--card-border);">
+                    <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); transition: width 0.3s ease;"></div>
+                </div>
+
+                <div class="terminal-box" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <h4 style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 600;">Active Agent Console Output</h4>
+                    <div class="terminal-log" id="progress-terminal" style="background-color: #050608; border: 1px solid var(--card-border); border-radius: var(--radius-md); padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #a1a1aa; height: 250px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);">
+[SYSTEM] Agent Sentinel Audit Console initialized. Ready to execute safety scans...
                     </div>
                 </div>
             </div>

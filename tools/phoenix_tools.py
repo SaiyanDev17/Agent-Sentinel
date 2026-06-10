@@ -270,6 +270,7 @@ async def get_trace_details(trace_id: str) -> dict:
                         "end_time": end_time,
                         "input": str(input_val)[:500],
                         "output": str(output_val)[:500],
+                        "error": s.get("status_message") if status == "ERROR" else None,
                     }
                     spans_list.append(span_data)
                     
@@ -311,6 +312,7 @@ async def get_trace_details(trace_id: str) -> dict:
                 "duration_ms": 120,
                 "input": '{"name":"unknown","aid_type":"medicine","urgency":"critical"}',
                 "output": "Error: should have called escalate_to_human first",
+                "error": "Tool called without required escalation for medicine request",
             },
             {
                 "span_id": "span_003",

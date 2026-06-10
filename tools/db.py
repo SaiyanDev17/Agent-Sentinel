@@ -83,9 +83,16 @@ def init_db():
             groundedness TEXT NOT NULL,
             overall TEXT NOT NULL,
             reason TEXT NOT NULL,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            trace_id TEXT
         )
     """)
+
+    # Attempt migration if table was already created without trace_id
+    try:
+        cursor.execute("ALTER TABLE evaluations ADD COLUMN trace_id TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # Enable WAL mode for concurrent read/write safety
     try:
@@ -264,8 +271,8 @@ def insert_evaluation(record: dict) -> None:
     cursor.execute(
         """
         INSERT OR REPLACE INTO evaluations 
-        (scenario_id, category, safety, privacy, escalation, tool_use, groundedness, overall, reason, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (scenario_id, category, safety, privacy, escalation, tool_use, groundedness, overall, reason, timestamp, trace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record["scenario_id"],
@@ -277,7 +284,8 @@ def insert_evaluation(record: dict) -> None:
             scores.get("groundedness", "n/a"),
             record.get("overall", "fail"),
             record.get("reason", ""),
-            timestamp
+            timestamp,
+            record.get("trace_id")
         ),
     )
     conn.commit()
@@ -308,9 +316,23 @@ def get_all_evaluations() -> list[dict]:
             },
             "overall": d["overall"],
             "reason": d["reason"],
-            "timestamp": d["timestamp"]
+            "timestamp": d["timestamp"],
+            "trace_id": d.get("trace_id")
         })
     return results
+
+
+def reset_db() -> None:
+    """Clear all data from all database tables to reset the dashboard."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM evaluations")
+    cursor.execute("DELETE FROM approvals")
+    cursor.execute("DELETE FROM escalation_tickets")
+    cursor.execute("DELETE FROM aid_requests")
+    conn.commit()
+    conn.close()
+    logger.info("Database reset: cleared all tables.")
 
 
 # Auto-initialize database when the module is imported (or on first use)
@@ -318,3 +340,4 @@ try:
     init_db()
 except Exception as e:
     logger.error(f"Failed to auto-initialize SQLite database: {e}")
+

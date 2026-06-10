@@ -323,46 +323,178 @@ async def api_approve(approval_id: str):
     """Approve a pending request. Called from the dashboard UI."""
     return approve_request(approval_id)
 
+class RunTestSuiteRequest(BaseModel):
+    """Configuration overrides for running the test suite against a specific agent."""
+    project_id: str | None = Field(default=None, description="GCP Project ID override")
+    location: str | None = Field(default=None, description="GCP Location override")
+    agent_id: str | None = Field(default=None, description="Dialogflow CX Agent ID override")
+    agent_description: str | None = Field(default=None, description="Dynamic target agent description for generating customized safety scenarios")
+
+
 @router.post("/run-test-suite", summary="Run automated safety test suite", operation_id="run_test_suite")
-async def api_run_test_suite():
-    """Run all adversarial scenarios against the live AidAssist agent via API,
+async def api_run_test_suite(req: RunTestSuiteRequest = None):
+    """Run all adversarial scenarios against the live Dialogflow CX agent via API,
     evaluate the responses, and save the results to the database and Phoenix."""
-    # 1. Load all scenarios
-    scenarios_data = await api_load_scenarios()
-    scenarios = scenarios_data.get("scenarios", [])
+    from fastapi.responses import StreamingResponse
+    from tools.scenario_generator import generate_dynamic_scenarios
+    import asyncio
     
-    if not scenarios:
-        raise HTTPException(status_code=500, detail="No scenarios loaded")
-        
-    all_scores = []
-    
-    # We clear the existing evaluations first to start fresh (overwrite as we go)
-    for scenario in scenarios:
-        scenario_id = scenario.get("scenario_id")
-        user_message = scenario.get("user_message", "")
-        
-        # Capture tool calls made during this sequential request
-        with tracker.capture(scenario_id):
+    if req is None:
+        req = RunTestSuiteRequest()
+
+    async def event_generator():
+        scenarios = []
+        # 1. Generate dynamic scenarios if description is provided
+        if req.agent_description and req.agent_description.strip():
+            yield json.dumps({
+                "status": "processing",
+                "index": 0,
+                "total": 12,
+                "scenario_id": "setup",
+                "category": "setup",
+                "agent": "Red-Team Generator",
+                "message": "Generating custom adversarial safety scenarios tailored to target agent description..."
+            }) + "\n"
+            await asyncio.sleep(0.1)
             try:
-                # Call live AidAssist agent via Google Dialogflow CX API
-                agent_response = query_aid_assist(user_message)
+                scenarios = generate_dynamic_scenarios(req.agent_description)
             except Exception as e:
-                # If the agent call fails, record it as a failure
-                logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")
-                agent_response = f"Agent failed to respond: {e}"
+                logger.error(f"Error generating dynamic scenarios: {e}")
                 
-            tool_calls = tracker.captured_tool_calls
+            if not scenarios:
+                yield json.dumps({
+                    "status": "processing",
+                    "index": 0,
+                    "total": 26,
+                    "scenario_id": "setup",
+                    "category": "setup",
+                    "agent": "System",
+                    "message": "Dynamic scenario generation failed or skipped. Falling back to default static scenarios..."
+                }) + "\n"
+                await asyncio.sleep(0.1)
+
+        # Fallback to static scenarios
+        if not scenarios:
+            try:
+                scenarios_data = await api_load_scenarios()
+                scenarios = scenarios_data.get("scenarios", [])
+            except Exception as e:
+                logger.error(f"Error loading static scenarios: {e}")
+
+        total = len(scenarios)
+        if not scenarios:
+            yield json.dumps({"status": "error", "message": "Failed to load safety audit scenarios."}) + "\n"
+            return
+
+        all_scores = []
+        for idx, scenario in enumerate(scenarios):
+            scenario_id = scenario.get("scenario_id")
+            category = scenario.get("category", "")
+            user_message = scenario.get("user_message", "")
             
-        # 3. Score response
-        scores = score_agent_response(scenario, agent_response, tool_calls)
-        
-        # 4. Save evaluation to DB & Arize Phoenix
-        await save_eval_result(scores)
-        all_scores.append(scores)
-        
-    # 5. Calculate release-readiness score
-    release_score = calculate_release_score(all_scores)
-    return release_score
+            # Yield Red-Team Gen active
+            yield json.dumps({
+                "status": "processing",
+                "index": idx + 1,
+                "total": total,
+                "scenario_id": scenario_id,
+                "category": category,
+                "agent": "Red-Team Generator",
+                "message": f"[{idx+1}/{total}] Generated attack vector: '{user_message[:50]}...'"
+            }) + "\n"
+            await asyncio.sleep(0.05)
+            
+            # Yield Target Agent active
+            yield json.dumps({
+                "status": "processing",
+                "index": idx + 1,
+                "total": total,
+                "scenario_id": scenario_id,
+                "category": category,
+                "agent": "Target Agent (AidAssist)",
+                "message": f"[{idx+1}/{total}] Executing exploit attempt against target agent via API..."
+            }) + "\n"
+            
+            # Capture tool calls made during this sequential request and trace with OpenTelemetry
+            from opentelemetry import trace
+            otel_tracer = trace.get_tracer("agent-sentinel")
+            
+            trace_id = None
+            with otel_tracer.start_as_current_span("run_test_scenario") as span:
+                span.set_attribute("input.value", user_message)
+                span.set_attribute("scenario_id", scenario_id)
+                span.set_attribute("category", category)
+                
+                with otel_tracer.start_as_current_span("query_dialogflow_cx") as df_span:
+                    df_span.set_attribute("input.value", user_message)
+                    with tracker.capture(scenario_id):
+                        try:
+                            # Call live Dialogflow CX agent via API with dynamic override configuration
+                            agent_response = query_aid_assist(
+                                text=user_message,
+                                project_id=req.project_id,
+                                location=req.location,
+                                agent_id=req.agent_id
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")
+                            agent_response = f"Agent failed to respond: {e}"
+                        tool_calls = tracker.captured_tool_calls
+                    df_span.set_attribute("output.value", agent_response)
+                
+                # Log any captured tool calls as child spans under the parent run span
+                for tc in tool_calls:
+                    with otel_tracer.start_as_current_span(tc["name"]) as tc_span:
+                        tc_span.set_attribute("span_kind", "TOOL")
+                        tc_span.set_attribute("input.value", json.dumps(tc.get("arguments", {})))
+                        tc_span.set_attribute("output.value", "Webhook tool execution completed.")
+                
+                # Extract the 32-character hex trace ID
+                trace_id = format(span.get_span_context().trace_id, "032x")
+
+            # Yield Eval Judge active
+            yield json.dumps({
+                "status": "processing",
+                "index": idx + 1,
+                "total": total,
+                "scenario_id": scenario_id,
+                "category": category,
+                "agent": "Eval Judge",
+                "message": f"[{idx+1}/{total}] Grading security/compliance rules and logging metrics..."
+            }) + "\n"
+            
+            # Score response
+            scores = score_agent_response(scenario, agent_response, tool_calls)
+            if trace_id:
+                scores["trace_id"] = trace_id
+            
+            # Save evaluation to DB & Arize Phoenix
+            await save_eval_result(scores)
+            all_scores.append(scores)
+            
+            # Yield test_completed event
+            yield json.dumps({
+                "status": "test_completed",
+                "index": idx + 1,
+                "total": total,
+                "scenario_id": scenario_id,
+                "category": category,
+                "verdict": scores.get("overall", "fail"),
+                "reason": scores.get("reason", ""),
+                "message": f"[{idx+1}/{total}] Scan finished. Verdict: {scores.get('overall', 'fail').upper()}"
+            }) + "\n"
+            await asyncio.sleep(0.05)
+            
+        # Calculate release-readiness score
+        release_score = calculate_release_score(all_scores)
+        yield json.dumps({
+            "status": "complete",
+            "release_score": release_score,
+            "message": f"Safety audit completed! Final Release Readiness: {release_score.get('overall_release_score', 0.0)}%"
+        }) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
 
 
 @router.get("/evaluations", summary="Get all test evaluation results", operation_id="get_evaluations")
@@ -370,3 +502,352 @@ async def api_get_evaluations():
     """Get all stored scenario evaluation results for dashboard rendering."""
     from tools.db import get_all_evaluations
     return get_all_evaluations()
+
+
+@router.post("/reset", summary="Reset dashboard data", operation_id="reset_dashboard")
+async def api_reset_dashboard():
+    """Delete all database records from evaluations, approvals, aid_requests, and escalation_tickets."""
+    from tools.db import reset_db
+    try:
+        reset_db()
+        return {"status": "success", "message": "All dashboard data has been reset to 0."}
+    except Exception as e:
+        logger.error(f"Failed to reset dashboard database: {e}")
+        raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
+
+
+@router.get("/export/csv", summary="Export test evaluations to CSV", operation_id="export_csv")
+async def api_export_csv():
+    """Export the current evaluations database table as a streaming CSV file download."""
+    from tools.db import get_all_evaluations
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    evals = get_all_evaluations()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write Header row
+    writer.writerow([
+        "Scenario ID", 
+        "Category", 
+        "Safety Score", 
+        "Privacy Score", 
+        "Escalation Score", 
+        "Tool Use Score", 
+        "Groundedness Score", 
+        "Overall Verdict", 
+        "Reason/Evidence", 
+        "Timestamp"
+    ])
+    
+    # Write Data rows
+    for item in evals:
+        scores = item.get("scores", {})
+        writer.writerow([
+            item.get("scenario_id", ""),
+            item.get("category", ""),
+            scores.get("safety", "n/a"),
+            scores.get("privacy", "n/a"),
+            scores.get("escalation", "n/a"),
+            scores.get("tool_use", "n/a"),
+            scores.get("groundedness", "n/a"),
+            item.get("overall", ""),
+            item.get("reason", ""),
+            item.get("timestamp", "")
+        ])
+        
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=agent_sentinel_safety_audit.csv"}
+    )
+
+
+@router.get("/export/pdf", summary="Export audit report in print/PDF layout", operation_id="export_pdf")
+async def api_export_pdf():
+    """Render a premium print-ready HTML safety report for easy saving to PDF."""
+    from tools.db import get_all_evaluations
+    from tools.eval_tools import calculate_release_score
+    from fastapi.responses import HTMLResponse
+    from datetime import datetime, timezone
+    
+    evals = get_all_evaluations()
+    
+    if not evals:
+        return HTMLResponse(
+            content="""
+            <html>
+                <head>
+                    <title>No Data Found</title>
+                    <script src="https://cdn.tailwindcss.com"></script>
+                </head>
+                <body class="bg-gray-50 flex flex-col items-center justify-center min-h-screen font-sans">
+                    <div class="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
+                        <svg class="w-16 h-16 text-yellow-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <h1 class="text-2xl font-bold text-gray-800 mb-2">No Evaluation Data</h1>
+                        <p class="text-gray-600 mb-6">Please run the safety tests from the dashboard before exporting a report.</p>
+                        <button onclick="window.close()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">Close Tab</button>
+                    </div>
+                </body>
+            </html>
+            """,
+            status_code=400
+        )
+        
+    # Aggregate scores
+    summary = calculate_release_score(evals)
+    score = summary.get("overall_release_score", 0.0)
+    decision = summary.get("decision", "BLOCKED")
+    decision_reason = summary.get("reason", "")
+    
+    # Count stats
+    passed_count = sum(1 for e in evals if e.get("overall") == "pass")
+    failed_count = sum(1 for e in evals if e.get("overall") == "fail")
+    
+    # Group by category for breakdown
+    category_map = {}
+    for e in evals:
+        cat = e.get("category", "unknown")
+        if cat not in category_map:
+            category_map[cat] = {"pass": 0, "fail": 0, "total": 0}
+        category_map[cat]["total"] += 1
+        if e.get("overall") == "pass":
+            category_map[cat]["pass"] += 1
+        else:
+            category_map[cat]["fail"] += 1
+            
+    # Decision formatting
+    decision_badge_class = "bg-red-50 text-red-700 border-red-200"
+    if decision == "APPROVED":
+        decision_badge_class = "bg-green-50 text-green-700 border-green-200"
+    elif decision == "APPROVED_WITH_WARNINGS":
+        decision_badge_class = "bg-yellow-50 text-yellow-700 border-yellow-200"
+        
+    # Build category breakdown HTML rows
+    category_rows_html = ""
+    for cat, stats in category_map.items():
+        pass_rate = (stats["pass"] / stats["total"]) * 100
+        pass_rate_color = "text-green-600" if pass_rate >= 90 else ("text-yellow-600" if pass_rate >= 75 else "text-red-600")
+        
+        category_rows_html += f"""
+        <tr class="border-b border-gray-100">
+            <td class="py-3 font-semibold text-gray-700 capitalize">{cat.replace('_', ' ')}</td>
+            <td class="py-3 text-center text-gray-500">{stats["total"]}</td>
+            <td class="py-3 text-center text-green-600 font-semibold">{stats["pass"]}</td>
+            <td class="py-3 text-center text-red-500 font-semibold">{stats["fail"]}</td>
+            <td class="py-3 text-right font-bold {pass_rate_color}">{pass_rate:.1f}%</td>
+        </tr>
+        """
+        
+    # Build detailed scenario test cases HTML
+    detailed_cases_html = ""
+    for e in evals:
+        verdict = e.get("overall", "fail").upper()
+        verdict_color = "bg-green-100 text-green-800" if verdict == "PASS" else "bg-red-100 text-red-800"
+        
+        scores = e.get("scores", {})
+        scores_list = []
+        for key, val in scores.items():
+            if val != "n/a":
+                val_color = "text-green-600" if val == "pass" else "text-red-600"
+                scores_list.append(f"<span>{key}: <b class='{val_color}'>{val}</b></span>")
+        scores_str = ", ".join(scores_list) if scores_list else "None"
+        
+        detailed_cases_html += f"""
+        <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm mb-4 page-break-avoid">
+            <div class="flex items-center justify-between border-b border-gray-100 pb-2 mb-2">
+                <div>
+                    <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">{e.get("category", "").replace('_', ' ')}</span>
+                    <h3 class="text-sm font-bold text-gray-800">{e.get("scenario_id", "")}</h3>
+                </div>
+                <span class="px-2.5 py-1 rounded-full text-xs font-bold {verdict_color}">{verdict}</span>
+            </div>
+            <div class="space-y-1.5 text-xs">
+                <div><span class="font-semibold text-gray-500">Evaluation Logic Scores:</span> <span class="text-gray-700">{scores_str}</span></div>
+                <div><span class="font-semibold text-gray-500">Evidence / Reason:</span> <span class="text-gray-700 italic">"{e.get("reason", "")}"</span></div>
+            </div>
+        </div>
+        """
+
+    current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Agent Sentinel Safety Audit Report - {current_date}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+        <style>
+            body {{
+                font-family: 'Plus Jakarta Sans', sans-serif;
+                background-color: #f8fafc;
+                color: #0f172a;
+            }}
+            .page-break-avoid {{
+                page-break-inside: avoid;
+            }}
+            @media print {{
+                body {{
+                    background-color: #ffffff;
+                    color: #000000;
+                    font-size: 12px;
+                }}
+                .no-print {{
+                    display: none !important;
+                }}
+                .print-container {{
+                    max-width: 100% !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                }}
+                .page-break-before {{
+                    page-break-before: always;
+                }}
+            }}
+        </style>
+    </head>
+    <body class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
+        <!-- Control Header for Screen viewing -->
+        <div class="max-w-4xl mx-auto mb-6 bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between no-print">
+            <div class="flex items-center gap-3">
+                <div class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+                <span class="text-sm text-slate-600 font-medium">Audit report ready for PDF export</span>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="window.print()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-sm transition-all shadow-sm flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+                    </svg>
+                    Print / Save PDF
+                </button>
+                <button onclick="window.close()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-sm transition-all border border-slate-200">
+                    Close
+                </button>
+            </div>
+        </div>
+
+        <div class="max-w-4xl mx-auto bg-white border border-slate-200 shadow-md rounded-2xl overflow-hidden print-container">
+            <!-- Top Gradient Bar -->
+            <div class="h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+
+            <!-- Report Body -->
+            <div class="p-8 sm:p-12">
+                <!-- Header -->
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-6 mb-8 gap-4">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="font-extrabold text-lg text-slate-800 uppercase tracking-wider">Agent</span>
+                            <span class="font-extrabold text-lg text-indigo-600 uppercase tracking-wider">Sentinel</span>
+                        </div>
+                        <h1 class="text-2xl font-extrabold text-slate-900">AI Agent Security & Safety Audit</h1>
+                        <p class="text-sm text-slate-500 mt-0.5">Automated Vulnerability Scan & Policy Enforcement Analysis</p>
+                    </div>
+                    <div class="text-left sm:text-right">
+                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-widest block">Generated On</span>
+                        <span class="text-sm font-semibold text-slate-700">{current_date}</span>
+                    </div>
+                </div>
+
+                <!-- Exec Summary Details -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <!-- Left Score Badge -->
+                    <div class="p-6 bg-slate-50 rounded-xl border border-slate-100 text-center flex flex-col justify-center">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Overall Release Score</span>
+                        <div class="text-5xl font-extrabold text-indigo-600 mb-1">{score:.1f}%</div>
+                        <div class="text-xs text-slate-500">Passed {passed_count} of {summary.get("total_scenarios", 0)} test cases</div>
+                    </div>
+
+                    <!-- Middle Verdict Badge -->
+                    <div class="p-6 rounded-xl border flex flex-col justify-center {decision_badge_class}">
+                        <span class="text-xs font-bold uppercase tracking-wider block mb-1 opacity-70">Deployment Verdict</span>
+                        <div class="text-2xl font-extrabold mb-1 tracking-tight">{decision.replace('_', ' ')}</div>
+                        <p class="text-xs leading-relaxed opacity-90">{decision_reason}</p>
+                    </div>
+
+                    <!-- Right Metadata -->
+                    <div class="p-6 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-2.5 flex flex-col justify-center">
+                        <div>
+                            <span class="font-bold text-slate-400 uppercase tracking-wider block">Target Agent ID</span>
+                            <span class="font-semibold text-slate-700 block truncate">{evals[0].get("scenario_id", "").split("-")[0] if evals else "AidAssist"}</span>
+                        </div>
+                        <div>
+                            <span class="font-bold text-slate-400 uppercase tracking-wider block">Scope Profile</span>
+                            <span class="font-semibold text-slate-700 block">Complete Red-Teaming Suite (26 Scenarios)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Breakdown -->
+                <div class="mb-10 page-break-avoid">
+                    <h2 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2">
+                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z"/>
+                        </svg>
+                        Category Performance
+                    </h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-slate-200 text-slate-400 font-semibold uppercase tracking-wider text-xs">
+                                    <th class="pb-3">Category</th>
+                                    <th class="pb-3 text-center">Total Tests</th>
+                                    <th class="pb-3 text-center">Passed</th>
+                                    <th class="pb-3 text-center">Failed</th>
+                                    <th class="pb-3 text-right">Pass Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {category_rows_html}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Detailed Test Results -->
+                <div class="page-break-before pt-6">
+                    <h2 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-100 pb-2">
+                        <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Detailed Scenario Evaluations
+                    </h2>
+                    <div class="space-y-4">
+                        {detailed_cases_html}
+                    </div>
+                </div>
+
+                <!-- Disclaimer & Signature -->
+                <div class="mt-12 pt-6 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-6 page-break-avoid">
+                    <div class="text-[10px] text-slate-400 leading-relaxed">
+                        <span class="font-bold text-slate-500 uppercase block mb-1">Disclaimer & Security Standard Notice</span>
+                        This report was generated automatically by Agent Sentinel using state-of-the-art LLM safety metrics and simulated adversarial prompts. While evaluations model typical safety risks, real-world interactions may differ. System settings and prompt updates will require subsequent audit iterations.
+                    </div>
+                    <div class="flex flex-col items-start sm:items-end justify-end text-xs text-slate-500">
+                        <div class="border-t border-slate-300 w-48 text-center pt-1.5 font-semibold text-slate-600 mt-6">
+                            Agent Sentinel Assessor
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            window.addEventListener('DOMContentLoaded', () => {{
+                // Auto print after a tiny delay
+                setTimeout(() => {{
+                    window.print();
+                }}, 1000);
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+

@@ -259,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="reason-text" title="${e.reason}">${e.reason || 'No eval comments.'}</div>
                 </td>
                 <td>
-                    <button class="btn btn-primary btn-sm btn-view-trace" data-id="${e.scenario_id}" data-trace="trace_mock_${e.scenario_id}">
+                    <button class="btn btn-primary btn-sm btn-view-trace" data-id="${e.scenario_id}" data-trace="${e.trace_id || 'trace_mock_' + e.scenario_id}">
                         <i class="fa-solid fa-code-branch"></i> View Trace
                     </button>
                 </td>
@@ -274,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Add view trace trigger
             const btnTrace = tr.querySelector('.btn-view-trace');
             btnTrace.addEventListener('click', () => {
-                openTraceModal(e.scenario_id, e.category, e.overall, e.reason);
+                openTraceModal(e.scenario_id, e.category, e.overall, e.reason, e.trace_id);
             });
 
             tbodyTestResults.appendChild(tr);
@@ -422,7 +422,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Tracing Modal Handlers ───────────────────────────────────────────
 
-    async function openTraceModal(scenarioId, category, status, reason) {
+    async function openTraceModal(scenarioId, category, status, reason, traceId) {
         modalTitleId.textContent = `(${scenarioId})`;
         modalMetaCategory.textContent = category.replace(/_/g, ' ');
         
@@ -454,7 +454,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Fetch Phoenix trace details using trace ID proxy
             // Mock trace details matching the failure reason if trace fetching fails
-            const traceRes = await fetch(`${API_BASE}/get-trace/trace_mock_${scenarioId}`);
+            const targetTraceId = traceId || `trace_mock_${scenarioId}`;
+            const traceRes = await fetch(`${API_BASE}/get-trace/${targetTraceId}`);
             if (traceRes.ok) {
                 const traceData = await traceRes.json();
                 renderModalSpans(traceData.spans || []);
@@ -499,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="span-content ${isError ? 'error-msg' : ''}">
                     ${isError ? `<i class="fa-solid fa-circle-exclamation" style="margin-right:0.25rem;"></i> ERROR: ` : ''}
-                    ${s.error ? escapeHtml(s.error) : 'Execution step succeeded.'}
+                    ${s.error ? escapeHtml(s.error) : (isError ? 'Execution step failed.' : 'Execution step succeeded.')}
                     ${ioHtml}
                 </div>
             `;
@@ -535,14 +536,67 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Event Listeners ──────────────────────────────────────────────────
 
-    // Sidebar navigation active state toggling
-    const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            navItems.forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
+    // ── SPA Page Switching Logic ──────────────────────────────────────────
+    function switchPage(pageId) {
+        // Hide all pages
+        document.querySelectorAll('.spa-page').forEach(page => {
+            page.classList.add('hidden-page');
         });
+        
+        // Show target page
+        const targetPage = document.getElementById(pageId);
+        if (targetPage) {
+            targetPage.classList.remove('hidden-page');
+        }
+        
+        // Update active nav state
+        const navMap = {
+            'page-overview': 'nav-overview',
+            'page-suite': 'nav-suite',
+            'page-approvals': 'nav-approvals',
+            'page-logs': 'nav-logs'
+        };
+        const activeNavId = navMap[pageId];
+        document.querySelectorAll('.nav-item').forEach(item => {
+            if (item.id === activeNavId) {
+                item.classList.add('active');
+            } else {
+                item.classList.remove('active');
+            }
+        });
+    }
+
+    // Bind sidebar links
+    document.getElementById('nav-overview').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchPage('page-overview');
     });
+    document.getElementById('nav-suite').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchPage('page-suite');
+    });
+    document.getElementById('nav-approvals').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchPage('page-approvals');
+    });
+    document.getElementById('nav-logs').addEventListener('click', (e) => {
+        e.preventDefault();
+        switchPage('page-logs');
+    });
+
+    // Collapse configuration panel by default
+    const configPanel = document.getElementById('config-panel');
+    const configHeader = document.getElementById('config-header');
+    if (configPanel) {
+        configPanel.classList.add('collapsed');
+    }
+    if (configHeader) {
+        configHeader.addEventListener('click', () => {
+            configPanel.classList.toggle('collapsed');
+        });
+    }
+
+    // ── Button and Search Action Listeners ─────────────────────────────────
 
     btnRefresh.addEventListener('click', fetchDashboardData);
     
@@ -550,14 +604,152 @@ document.addEventListener('DOMContentLoaded', () => {
         btnRunTests.disabled = true;
         btnRunTests.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing Agent...';
         showLoadingState();
+        
+        // Clear evaluations visually and reset progress UI
+        state.evaluations = [];
+        renderTestResults();
+        
+        const modalProgress = document.getElementById('modal-progress');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const progressStatusText = document.getElementById('progress-status-text');
+        const progressActiveAgent = document.getElementById('progress-active-agent');
+        const progressTerminal = document.getElementById('progress-terminal');
+        const btnCloseProgress = document.getElementById('btn-close-progress');
+        
+        modalProgress.classList.add('open');
+        progressBarFill.style.width = '0%';
+        progressStatusText.textContent = 'Initializing scans...';
+        btnCloseProgress.style.display = 'none';
+        progressTerminal.innerHTML = '<span class="system">[SYSTEM] Connecting to backend safety scans...</span>\n';
+        
         try {
-            const res = await fetch(`${API_BASE}/run-test-suite`, { method: 'POST' });
-            if (res.ok) {
-                await fetchDashboardData();
-                alert('Safety test suite completed successfully!');
+            const projectId = document.getElementById('input-project-id').value.trim();
+            const locationVal = document.getElementById('input-location').value.trim();
+            const agentId = document.getElementById('input-agent-id').value.trim();
+            const agentDescription = document.getElementById('input-agent-description').value.trim();
+            
+            const reqBody = {};
+            if (projectId) reqBody.project_id = projectId;
+            if (locationVal) reqBody.location = locationVal;
+            if (agentId) reqBody.agent_id = agentId;
+            if (agentDescription) reqBody.agent_description = agentDescription;
+            
+            const configStatusLabel = document.getElementById('config-status-label');
+            if (projectId || locationVal || agentId || agentDescription) {
+                configStatusLabel.textContent = "Using Custom Configuration";
+                configStatusLabel.style.color = "var(--accent-blue)";
             } else {
-                const errorData = await res.json();
-                alert(`Test run failed: ${errorData.detail || res.statusText}`);
+                configStatusLabel.textContent = "Using Environment Defaults";
+                configStatusLabel.style.color = "var(--text-secondary)";
+            }
+
+            const res = await fetch(`${API_BASE}/run-test-suite`, { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reqBody)
+            });
+            
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.detail || res.statusText);
+            }
+            
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            
+            function updateActiveAgentBadge(agent) {
+                progressActiveAgent.innerHTML = `<i class="fa-solid fa-robot animate-pulse"></i> ${agent}`;
+                if (agent.includes("Generator")) {
+                    progressActiveAgent.style.backgroundColor = "rgba(192, 132, 252, 0.1)";
+                    progressActiveAgent.style.color = "#c084fc";
+                } else if (agent.includes("AidAssist") || agent.includes("Agent")) {
+                    progressActiveAgent.style.backgroundColor = "rgba(96, 165, 250, 0.1)";
+                    progressActiveAgent.style.color = "#60a5fa";
+                } else if (agent.includes("Judge")) {
+                    progressActiveAgent.style.backgroundColor = "rgba(234, 179, 8, 0.1)";
+                    progressActiveAgent.style.color = "#eab308";
+                } else {
+                    progressActiveAgent.style.backgroundColor = "rgba(56, 189, 248, 0.1)";
+                    progressActiveAgent.style.color = "#38bdf8";
+                }
+            }
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // save incomplete line in buffer
+                
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const data = JSON.parse(line);
+                        
+                        if (data.status === 'processing') {
+                            const pct = data.total > 0 ? Math.round((data.index / data.total) * 100) : 5;
+                            progressBarFill.style.width = `${pct}%`;
+                            progressStatusText.textContent = data.message;
+                            
+                            updateActiveAgentBadge(data.agent);
+                            
+                            let spanClass = 'system';
+                            if (data.agent.includes("Generator")) spanClass = 'generator';
+                            else if (data.agent.includes("AidAssist") || data.agent.includes("Agent")) spanClass = 'agent';
+                            else if (data.agent.includes("Judge")) spanClass = 'judge';
+                            
+                            progressTerminal.innerHTML += `<span class="${spanClass}">[${data.agent}]</span> ${escapeHtml(data.message)}\n`;
+                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
+                        } 
+                        else if (data.status === 'test_completed') {
+                            const pct = Math.round((data.index / data.total) * 100);
+                            progressBarFill.style.width = `${pct}%`;
+                            
+                            const isPass = data.verdict === 'pass';
+                            const verdictClass = isPass ? 'success' : 'fail';
+                            progressTerminal.innerHTML += `<span class="${verdictClass}">[VERDICT: ${data.verdict.toUpperCase()}]</span> ${escapeHtml(data.reason)}\n\n`;
+                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
+                            
+                            // Hydrate the test results table dynamically
+                            const newEval = {
+                                scenario_id: data.scenario_id,
+                                category: data.category,
+                                overall: data.verdict,
+                                reason: data.reason
+                            };
+                            
+                            // If first scenario, clear the mock empty state row
+                            if (state.evaluations.length === 0) {
+                                tbodyTestResults.innerHTML = '';
+                            }
+                            
+                            state.evaluations.push(newEval);
+                            renderTestResults();
+                        } 
+                        else if (data.status === 'complete') {
+                            progressBarFill.style.width = '100%';
+                            progressStatusText.textContent = 'All safety audits completed!';
+                            
+                            const scoreVal = data.release_score.overall_release_score;
+                            const scoreClass = scoreVal >= 90 ? 'success' : (scoreVal >= 75 ? 'judge' : 'fail');
+                            
+                            progressTerminal.innerHTML += `<span class="system">[SYSTEM]</span> <span class="${scoreClass}">Scan finished. Release Readiness Score: ${scoreVal}% (${data.release_score.decision})</span>\n`;
+                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
+                            
+                            btnCloseProgress.style.display = 'block';
+                            fetchDashboardData();
+                        }
+                        else if (data.status === 'error') {
+                            progressTerminal.innerHTML += `<span class="fail">[ERROR] ${escapeHtml(data.message)}</span>\n`;
+                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
+                            btnCloseProgress.style.display = 'block';
+                        }
+                    } catch (err) {
+                        console.error('Error parsing line:', err, line);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error running test suite:', error);
@@ -568,9 +760,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Reset Dashboard Action
+    const btnReset = document.getElementById('btn-reset');
+    if (btnReset) {
+        btnReset.addEventListener('click', async () => {
+            if (!confirm("Are you sure you want to reset the dashboard? This will wipe all test evaluations, approvals, aid requests, and escalation tickets.")) {
+                return;
+            }
+            btnReset.disabled = true;
+            btnReset.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';
+            try {
+                const res = await fetch(`${API_BASE}/reset`, { method: 'POST' });
+                if (res.ok) {
+                    await fetchDashboardData();
+                    alert("Dashboard has been reset to zero.");
+                } else {
+                    alert(`Reset failed: ${res.statusText}`);
+                }
+            } catch (error) {
+                console.error("Error resetting dashboard:", error);
+                alert(`Reset failed: ${error.message}`);
+            } finally {
+                btnReset.disabled = false;
+                btnReset.innerHTML = '<i class="fa-solid fa-trash-can"></i> Reset Console';
+            }
+        });
+    }
+
+    // Export CSV Action
+    const btnExportCsv = document.getElementById('btn-export-csv');
+    if (btnExportCsv) {
+        btnExportCsv.addEventListener('click', () => {
+            window.location.href = `${API_BASE}/export/csv`;
+        });
+    }
+
+    // Print PDF Action
+    const btnPrintPdf = document.getElementById('btn-print-pdf');
+    if (btnPrintPdf) {
+        btnPrintPdf.addEventListener('click', () => {
+            window.open(`${API_BASE}/export/pdf`, '_blank');
+        });
+    }
+
     searchTestsInput.addEventListener('input', renderTestResults);
     
-    // Tab Toggles
+    // Tab Toggles for Live Log Feed
     tabRequests.addEventListener('click', () => {
         tabRequests.classList.add('active');
         tabTickets.classList.remove('active');
