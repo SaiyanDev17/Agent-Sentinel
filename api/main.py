@@ -22,8 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# MCP server
-from fastapi_mcp import FastApiMCP
+# MCP server (Streamable HTTP transport for Google Agent Builder)
+from api.mcp_server import mcp_server
 
 # Load environment variables BEFORE importing anything else
 load_dotenv()
@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Phoenix tracing: {tracing_result.get('status', 'unknown')}")
 
     logger.info("All endpoints available at /tools/*")
+    logger.info("MCP server at /mcp (Streamable HTTP)")
     logger.info("OpenAPI spec at /docs")
     logger.info("Dashboard at /")
     logger.info("=" * 60)
@@ -95,10 +96,9 @@ app.add_middleware(
 # Register API routes under /tools prefix
 app.include_router(router, prefix="/tools", tags=["Tools"])
 
-# ── MCP Server (auto-exposes all routes as MCP tools) ──────────────
+# ── MCP Server (Streamable HTTP for Google Agent Builder) ──────────
 # Agent Builder connects to /mcp to discover and call tools
-mcp = FastApiMCP(app, name="Agent Sentinel Tools")
-mcp.mount()  # serves at /mcp
+app.mount("/mcp", mcp_server.streamable_http_app())
 
 
 # ── Health Check (outside /tools so load balancers can reach it) ────
