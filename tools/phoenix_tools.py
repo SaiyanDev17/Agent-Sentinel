@@ -45,6 +45,7 @@ PHOENIX_COLLECTOR_ENDPOINT = os.getenv(
 
 # Track whether tracing has been initialized
 _tracing_initialized = False
+_tracer_provider = None  # Store globally so routes.py can access it
 
 
 # ── 1. Tracing Setup ───────────────────────────────────────────────
@@ -58,7 +59,7 @@ def setup_phoenix_tracing() -> dict:
     Returns:
         dict with status and configuration details.
     """
-    global _tracing_initialized
+    global _tracing_initialized, _tracer_provider
 
     if _tracing_initialized:
         return {"status": "already_initialized", "project": PHOENIX_PROJECT_NAME}
@@ -72,14 +73,16 @@ def setup_phoenix_tracing() -> dict:
         }
 
     try:
-        # Phoenix OTEL setup — sends OpenTelemetry traces to Phoenix
+        # Phoenix OTEL setup — sends OpenTelemetry traces to Phoenix Cloud
+        # The register() function reads PHOENIX_API_KEY and PHOENIX_COLLECTOR_ENDPOINT
+        # from env vars automatically when not passed explicitly.
         from phoenix.otel import register
 
         tracer_provider = register(
             project_name=PHOENIX_PROJECT_NAME,
             endpoint=PHOENIX_COLLECTOR_ENDPOINT,
-            headers={"api_key": PHOENIX_API_KEY},
         )
+        _tracer_provider = tracer_provider
 
         # Instrument Vertex AI / Google GenAI so Gemini calls are traced
         try:
@@ -120,6 +123,11 @@ def setup_phoenix_tracing() -> dict:
         }
 
 
+def get_tracer_provider():
+    """Return the global tracer provider set up by setup_phoenix_tracing."""
+    return _tracer_provider
+
+
 # ── 2. Phoenix REST API helpers ─────────────────────────────────────
 
 def _phoenix_headers() -> dict:
@@ -127,6 +135,7 @@ def _phoenix_headers() -> dict:
     headers = {"Content-Type": "application/json"}
     if PHOENIX_API_KEY:
         headers["api_key"] = PHOENIX_API_KEY
+        headers["Authorization"] = f"Bearer {PHOENIX_API_KEY}"
     return headers
 
 
@@ -135,11 +144,13 @@ def _get_phoenix_client():
 
     The Phoenix Python client provides higher-level operations
     for datasets, experiments, and prompts.
+    For Cloud-hosted spaces, base_url must be the full space URL
+    e.g. https://app.phoenix.arize.com/s/developers-vitc
     """
     try:
         from phoenix.client import Client
         client = Client(
-            base_url=PHOENIX_BASE_URL,
+            base_url=PHOENIX_BASE_URL,  # must be space URL for cloud
             api_key=PHOENIX_API_KEY or None,
         )
         return client
@@ -162,25 +173,32 @@ async def get_recent_traces(limit: int = 20) -> dict:
     """
     logger.info(f"Fetching recent {limit} traces from Phoenix")
 
-    # Try using Phoenix client first
+    # Try using Phoenix client with get_spans_dataframe (most reliable method)
     client = _get_phoenix_client()
     if client:
         try:
-            # Phoenix client uses pandas DataFrames for trace queries
-            # In v17.2, get_traces returns TraceData TypedDicts
-            traces_list = client.traces.get_traces(
+            import pandas as pd
+            df = client.spans.get_spans_dataframe(
                 project_identifier=PHOENIX_PROJECT_NAME,
-                limit=limit,
             )
 
-            if traces_list:
+            if df is not None and not df.empty:
+                # Group by trace_id to get unique traces
+                trace_groups = df.groupby("context.trace_id").agg(
+                    span_count=("name", "count"),
+                    start_time=("start_time", "min"),
+                    has_errors=("status_code", lambda x: (x == "ERROR").any()),
+                ).reset_index().sort_values("start_time", ascending=False).head(limit)
+
                 traces = []
-                for t in traces_list:
+                for _, row in trace_groups.iterrows():
                     traces.append({
-                        "trace_id": t.get("trace_id", ""),
-                        "status": "OK",  # Default to OK, or inspect spans if include_spans=True
-                        "created_at": t.get("start_time", ""),
-                        "name": f"trace_{t.get('id', '')}",
+                        "trace_id": row["context.trace_id"],
+                        "status": "ERROR" if row["has_errors"] else "OK",
+                        "created_at": str(row["start_time"]),
+                        "name": f"trace_{row['context.trace_id'][:8]}",
+                        "span_count": int(row["span_count"]),
+                        "has_errors": bool(row["has_errors"]),
                     })
                 return {
                     "traces": traces,
@@ -194,7 +212,7 @@ async def get_recent_traces(limit: int = 20) -> dict:
     try:
         async with httpx.AsyncClient() as http_client:
             response = await http_client.get(
-                f"{PHOENIX_BASE_URL}/api/v1/traces",
+                f"{PHOENIX_BASE_URL}/v1/traces",
                 headers=_phoenix_headers(),
                 params={"project_name": PHOENIX_PROJECT_NAME, "limit": limit},
                 timeout=30.0,
@@ -238,56 +256,78 @@ async def get_trace_details(trace_id: str) -> dict:
     """
     logger.info(f"Fetching trace details for {trace_id}")
 
-    # Try Phoenix client
+    # Try Phoenix client with get_spans_dataframe
     client = _get_phoenix_client()
     if client:
         try:
-            spans = client.spans.get_spans(
+            import pandas as pd
+            df = client.spans.get_spans_dataframe(
                 project_identifier=PHOENIX_PROJECT_NAME,
-                trace_ids=[trace_id],
             )
-            if spans:
-                spans_list = []
-                errors = []
-                for s in spans:
-                    span_id = s.get("context", {}).get("span_id", "")
-                    name = s.get("name", "")
-                    span_kind = s.get("span_kind", "")
-                    status = s.get("status_code", "OK")
-                    start_time = s.get("start_time", "")
-                    end_time = s.get("end_time", "")
-                    
-                    attributes = s.get("attributes", {})
-                    input_val = attributes.get("input.value", "")
-                    output_val = attributes.get("output.value", "")
-                    
-                    span_data = {
-                        "span_id": span_id,
-                        "name": name,
-                        "span_kind": span_kind,
-                        "status": status,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "input": str(input_val)[:500],
-                        "output": str(output_val)[:500],
-                        "error": s.get("status_message") if status == "ERROR" else None,
+
+            if df is not None and not df.empty:
+                # Filter to spans belonging to this trace
+                if "context.trace_id" in df.columns:
+                    trace_df = df[df["context.trace_id"] == trace_id]
+                else:
+                    trace_df = pd.DataFrame()
+
+                if not trace_df.empty:
+                    spans_list = []
+                    errors = []
+                    for _, s in trace_df.iterrows():
+                        span_id = s.get("context.span_id", "")
+                        name = s.get("name", "")
+                        span_kind = s.get("span_kind", "CHAIN")
+                        status = s.get("status_code", "OK")
+                        start_time = str(s.get("start_time", ""))
+                        end_time = str(s.get("end_time", ""))
+
+                        # Get input/output from attributes columns
+                        input_val = s.get("attributes.input.value", "") or s.get("input.value", "")
+                        output_val = s.get("attributes.output.value", "") or s.get("output.value", "")
+
+                        # Calculate duration
+                        duration_ms = None
+                        try:
+                            st = pd.Timestamp(s.get("start_time"))
+                            et = pd.Timestamp(s.get("end_time"))
+                            if pd.notna(st) and pd.notna(et):
+                                duration_ms = int((et - st).total_seconds() * 1000)
+                        except Exception:
+                            pass
+
+                        span_data = {
+                            "span_id": str(span_id),
+                            "name": str(name),
+                            "span_kind": str(span_kind),
+                            "status": str(status),
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "duration_ms": duration_ms,
+                            "input": str(input_val)[:500] if input_val else "",
+                            "output": str(output_val)[:500] if output_val else "",
+                            "error": str(s.get("status_message", "")) if status == "ERROR" else None,
+                        }
+                        spans_list.append(span_data)
+
+                        if status == "ERROR":
+                            errors.append({
+                                "span_id": str(span_id),
+                                "name": str(name),
+                                "error": str(s.get("status_message", "Unknown error")),
+                            })
+
+                    return {
+                        "trace_id": trace_id,
+                        "spans": spans_list,
+                        "span_count": len(spans_list),
+                        "errors": errors,
+                        "has_errors": len(errors) > 0,
+                        "source": "phoenix_client",
                     }
-                    spans_list.append(span_data)
-                    
-                    if status == "ERROR":
-                        errors.append({
-                            "span_id": span_id,
-                            "name": name,
-                            "error": s.get("status_message", "Unknown error"),
-                        })
-                return {
-                    "trace_id": trace_id,
-                    "spans": spans_list,
-                    "span_count": len(spans_list),
-                    "errors": errors,
-                    "has_errors": len(errors) > 0,
-                    "source": "phoenix_client",
-                }
+                else:
+                    logger.info(f"No spans found for trace_id={trace_id} in Phoenix")
         except Exception as e:
             logger.warning(f"Phoenix client span query failed: {e}")
 

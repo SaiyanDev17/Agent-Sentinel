@@ -41,6 +41,7 @@ from tools.phoenix_tools import (
     save_eval_result,
     get_experiment_comparison,
     update_prompt_in_phoenix,
+    get_tracer_provider,
 )
 from tools.eval_tools import (
     score_agent_response,
@@ -417,7 +418,14 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
             
             # Capture tool calls made during this sequential request and trace with OpenTelemetry
             from opentelemetry import trace
-            otel_tracer = trace.get_tracer("agent-sentinel")
+            
+            # Use the Phoenix-configured tracer provider if available,
+            # otherwise fall back to the global (possibly no-op) provider
+            tp = get_tracer_provider()
+            if tp:
+                otel_tracer = tp.get_tracer("agent-sentinel")
+            else:
+                otel_tracer = trace.get_tracer("agent-sentinel")
             
             trace_id = None
             with otel_tracer.start_as_current_span("run_test_scenario") as span:

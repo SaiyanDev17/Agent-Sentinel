@@ -826,10 +826,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === modalTrace) closeModal();
     });
 
+    const btnCloseProgress = document.getElementById('btn-close-progress');
+    if (btnCloseProgress) {
+        btnCloseProgress.addEventListener('click', () => {
+            const modalProgress = document.getElementById('modal-progress');
+            if (modalProgress) modalProgress.classList.remove('open');
+        });
+    }
+
     // Escape Key to Close Modal
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modalTrace.classList.contains('open')) {
-            closeModal();
+        if (e.key === 'Escape') {
+            if (modalTrace.classList.contains('open')) {
+                closeModal();
+            }
+            const modalProgress = document.getElementById('modal-progress');
+            const btnCloseProgress = document.getElementById('btn-close-progress');
+            if (modalProgress && modalProgress.classList.contains('open') && btnCloseProgress && btnCloseProgress.style.display !== 'none') {
+                modalProgress.classList.remove('open');
+            }
         }
     });
 
