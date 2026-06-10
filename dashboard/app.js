@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // DOM Elements
     const btnRefresh = document.getElementById('btn-refresh');
+    const btnRunTests = document.getElementById('btn-run-tests');
     const searchTestsInput = document.getElementById('search-tests');
     const tbodyTestResults = document.getElementById('tbody-test-results');
     const approvalsContainer = document.getElementById('approvals-container');
@@ -544,6 +545,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btnRefresh.addEventListener('click', fetchDashboardData);
+    
+    btnRunTests.addEventListener('click', async () => {
+        btnRunTests.disabled = true;
+        btnRunTests.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing Agent...';
+        showLoadingState();
+        try {
+            const res = await fetch(`${API_BASE}/run-test-suite`, { method: 'POST' });
+            if (res.ok) {
+                await fetchDashboardData();
+                alert('Safety test suite completed successfully!');
+            } else {
+                const errorData = await res.json();
+                alert(`Test run failed: ${errorData.detail || res.statusText}`);
+            }
+        } catch (error) {
+            console.error('Error running test suite:', error);
+            alert(`Test run failed: ${error.message}`);
+        } finally {
+            btnRunTests.disabled = false;
+            btnRunTests.innerHTML = '<i class="fa-solid fa-play"></i> Run Safety Tests';
+        }
+    });
+
     searchTestsInput.addEventListener('input', renderTestResults);
     
     // Tab Toggles

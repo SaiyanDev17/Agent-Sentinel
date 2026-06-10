@@ -15,8 +15,14 @@ Endpoint Groups:
 
 import os
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("routes")
+
+# Import tracker and client for API-driven testing
+from tools.dialogflow_client import tracker, query_aid_assist
 
 # Import tool functions
 from tools.aid_assist_tools import (
@@ -114,23 +120,27 @@ class EscalationRequest(BaseModel):
 async def api_register_aid(req: AidRegistrationRequest):
     """Register a new disaster aid request.
     Called by the AidAssist agent when a user needs shelter, food, transport, or medicine."""
+    tracker.log_tool_call("register_aid_request", req.model_dump())
     return register_aid_request(req.name, req.location, req.aid_type, req.urgency)
 
 @router.get("/lookup-shelter/{location}", summary="Find nearby shelters", operation_id="lookup_shelter")
 async def api_lookup_shelter(location: str):
     """Find nearby shelters by location.
     Returns a list of shelters with capacity, occupancy, and facilities."""
+    tracker.log_tool_call("lookup_shelter", {"location": location})
     return lookup_shelter(location)
 
 @router.post("/escalate", summary="Escalate to human operator", operation_id="escalate_to_human")
 async def api_escalate(req: EscalationRequest):
     """Escalate a case to a human operator.
     MUST be called for medical emergencies, unaccompanied minors, safety threats."""
+    tracker.log_tool_call("escalate_to_human", req.model_dump())
     return escalate_to_human(req.reason, req.urgency_level)
 
 @router.get("/check-status/{request_id}", summary="Check aid request status", operation_id="check_aid_status")
 async def api_check_status(request_id: str):
     """Check the status of an existing aid request by its AID-XXXXXXXX ID."""
+    tracker.log_tool_call("check_aid_status", {"request_id": request_id})
     return check_aid_status(request_id)
 
 @router.get("/dashboard-data", summary="Get all data for dashboard", operation_id="get_dashboard_data")
@@ -312,6 +322,48 @@ async def api_pending_approvals():
 async def api_approve(approval_id: str):
     """Approve a pending request. Called from the dashboard UI."""
     return approve_request(approval_id)
+
+@router.post("/run-test-suite", summary="Run automated safety test suite", operation_id="run_test_suite")
+async def api_run_test_suite():
+    """Run all adversarial scenarios against the live AidAssist agent via API,
+    evaluate the responses, and save the results to the database and Phoenix."""
+    # 1. Load all scenarios
+    scenarios_data = await api_load_scenarios()
+    scenarios = scenarios_data.get("scenarios", [])
+    
+    if not scenarios:
+        raise HTTPException(status_code=500, detail="No scenarios loaded")
+        
+    all_scores = []
+    
+    # We clear the existing evaluations first to start fresh (overwrite as we go)
+    for scenario in scenarios:
+        scenario_id = scenario.get("scenario_id")
+        user_message = scenario.get("user_message", "")
+        
+        # Capture tool calls made during this sequential request
+        with tracker.capture(scenario_id):
+            try:
+                # Call live AidAssist agent via Google Dialogflow CX API
+                agent_response = query_aid_assist(user_message)
+            except Exception as e:
+                # If the agent call fails, record it as a failure
+                logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")
+                agent_response = f"Agent failed to respond: {e}"
+                
+            tool_calls = tracker.captured_tool_calls
+            
+        # 3. Score response
+        scores = score_agent_response(scenario, agent_response, tool_calls)
+        
+        # 4. Save evaluation to DB & Arize Phoenix
+        await save_eval_result(scores)
+        all_scores.append(scores)
+        
+    # 5. Calculate release-readiness score
+    release_score = calculate_release_score(all_scores)
+    return release_score
+
 
 @router.get("/evaluations", summary="Get all test evaluation results", operation_id="get_evaluations")
 async def api_get_evaluations():
