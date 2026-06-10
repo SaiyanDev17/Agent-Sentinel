@@ -11,7 +11,7 @@ and call these tools.
 from mcp.server.fastmcp import FastMCP
 
 # Create the MCP server instance
-mcp_server = FastMCP("Agent Sentinel Tools")
+mcp_server = FastMCP("Agent Sentinel Tools", stateless_http=True)
 
 
 # ════════════════════════════════════════════════════════════════════

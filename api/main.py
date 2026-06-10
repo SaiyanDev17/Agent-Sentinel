@@ -45,25 +45,27 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize services on startup, clean up on shutdown."""
-    # ── Startup ──
-    logger.info("=" * 60)
-    logger.info("Agent Sentinel — Starting up")
-    logger.info("=" * 60)
+    # Start MCP session manager (required for streamable HTTP)
+    async with mcp_server.session_manager.run():
+        # ── Startup ──
+        logger.info("=" * 60)
+        logger.info("Agent Sentinel — Starting up")
+        logger.info("=" * 60)
 
-    # Auto-initialize Phoenix tracing
-    tracing_result = setup_phoenix_tracing()
-    logger.info(f"Phoenix tracing: {tracing_result.get('status', 'unknown')}")
+        # Auto-initialize Phoenix tracing
+        tracing_result = setup_phoenix_tracing()
+        logger.info(f"Phoenix tracing: {tracing_result.get('status', 'unknown')}")
 
-    logger.info("All endpoints available at /tools/*")
-    logger.info("MCP server at /mcp (Streamable HTTP)")
-    logger.info("OpenAPI spec at /docs")
-    logger.info("Dashboard at /")
-    logger.info("=" * 60)
+        logger.info("All endpoints available at /tools/*")
+        logger.info("MCP server at /mcp (Streamable HTTP)")
+        logger.info("OpenAPI spec at /docs")
+        logger.info("Dashboard at /")
+        logger.info("=" * 60)
 
-    yield  # App is running
+        yield  # App is running
 
-    # ── Shutdown ──
-    logger.info("Agent Sentinel — Shutting down")
+        # ── Shutdown ──
+        logger.info("Agent Sentinel — Shutting down")
 
 
 # ── App ─────────────────────────────────────────────────────────────
