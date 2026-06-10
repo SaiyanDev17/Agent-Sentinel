@@ -1,5 +1,5 @@
 """
-Agent Red-Team Autopilot — FastAPI Backend
+Agent Sentinel — FastAPI Backend
 ==========================================
 Main application entry point. Serves the API endpoints that
 Agent Builder calls as tools, and hosts the dashboard.
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     """Initialize services on startup, clean up on shutdown."""
     # ── Startup ──
     logger.info("=" * 60)
-    logger.info("Agent Red-Team Autopilot — Starting up")
+    logger.info("Agent Sentinel — Starting up")
     logger.info("=" * 60)
 
     # Auto-initialize Phoenix tracing
@@ -59,15 +59,15 @@ async def lifespan(app: FastAPI):
     yield  # App is running
 
     # ── Shutdown ──
-    logger.info("Agent Red-Team Autopilot — Shutting down")
+    logger.info("Agent Sentinel — Shutting down")
 
 
 # ── App ─────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Agent Red-Team Autopilot",
+    title="Agent Sentinel",
     description=(
-        "API backend for the Agent Red-Team Autopilot QA system.\n\n"
+        "API backend for the Agent Sentinel QA system.\n\n"
         "**Agent Builder calls these endpoints as OpenAPI tools** to:\n"
         "- Run adversarial scenarios against AidAssist\n"
         "- Score agent responses for safety, privacy, and tool use\n"
@@ -84,7 +84,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -100,7 +100,7 @@ async def health_check():
     """Health check endpoint for Cloud Run and load balancers."""
     return {
         "status": "healthy",
-        "service": "agent-red-team-autopilot",
+        "service": "agent-sentinel",
         "version": "1.0.0",
     }
 

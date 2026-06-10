@@ -1,4 +1,4 @@
-# Demo Script — Agent Red-Team Autopilot
+# Demo Script — Agent Sentinel
 
 3-minute demo video script for hackathon submission.
 

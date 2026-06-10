@@ -1,4 +1,4 @@
-# Agent Red-Team Autopilot
+# Agent Sentinel
 
 > Arize Phoenix-powered agent testing, tracing, and release-readiness system for Gemini agents.
 
@@ -6,7 +6,7 @@
 
 ## What Is This?
 
-Before a company deploys an AI agent, **Agent Red-Team Autopilot** asks:
+Before a company deploys an AI agent, **Agent Sentinel** asks:
 
 > *Can this agent be trusted under messy, adversarial, privacy-sensitive, and high-stakes real-world conditions?*
 
@@ -69,8 +69,8 @@ Agent QA Console (Release Score + Failure Clusters + Improvements + Before/After
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR-USERNAME/agent-red-team-autopilot.git
-cd agent-red-team-autopilot
+git clone https://github.com/YOUR-USERNAME/agent-sentinel.git
+cd agent-sentinel
 
 # Create virtual environment
 python -m venv venv
@@ -101,7 +101,7 @@ Copy `.env.example` to `.env` and fill in:
 ## Project Structure
 
 ```
-agent-red-team-autopilot/
+agent-sentinel/
 ├── README.md
 ├── LICENSE
 ├── requirements.txt

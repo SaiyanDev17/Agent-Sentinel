@@ -7,7 +7,7 @@ Step-by-step instructions for configuring all agents in Google Cloud Agent Build
 ## Prerequisites
 
 - Google Cloud account with free trial activated
-- Project `agent-red-team-autopilot` created
+- Project `agent-sentinel` created
 - All 6 APIs enabled (Vertex AI, Agent Builder, Cloud Run, Cloud Build, Artifact Registry, Secret Manager)
 
 ## Agents to Create

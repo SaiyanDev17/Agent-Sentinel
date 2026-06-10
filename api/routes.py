@@ -312,3 +312,9 @@ async def api_pending_approvals():
 async def api_approve(approval_id: str):
     """Approve a pending request. Called from the dashboard UI."""
     return approve_request(approval_id)
+
+@router.get("/evaluations", summary="Get all test evaluation results")
+async def api_get_evaluations():
+    """Get all stored scenario evaluation results for dashboard rendering."""
+    from tools.db import get_all_evaluations
+    return get_all_evaluations()

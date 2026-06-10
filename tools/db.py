@@ -19,7 +19,7 @@ DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "red_tea
 def get_connection():
     """Return a thread-safe connection to the SQLite database.
     Since SQLite uses file locks, we open a new connection for each request/transaction."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row  # Allows accessing columns by name
     return conn
 
@@ -70,6 +70,28 @@ def init_db():
             approved_at TEXT
         )
     """)
+
+    # 4. Test Evaluations table (for live dashboard results)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evaluations (
+            scenario_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            safety TEXT NOT NULL,
+            privacy TEXT NOT NULL,
+            escalation TEXT NOT NULL,
+            tool_use TEXT NOT NULL,
+            groundedness TEXT NOT NULL,
+            overall TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    """)
+
+    # Enable WAL mode for concurrent read/write safety
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+    except Exception as e:
+        logger.warning(f"Could not enable WAL mode: {e}")
 
     conn.commit()
     conn.close()
@@ -226,6 +248,69 @@ def update_approval_status(approval_id: str, status: str, approved_at: str = Non
     conn.commit()
     conn.close()
     return rowcount > 0
+
+
+# ── Test Evaluation Helpers ──────────────────────────────────────────
+
+def insert_evaluation(record: dict) -> None:
+    """Insert or replace a test scenario evaluation result."""
+    from datetime import datetime, timezone
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    timestamp = record.get("timestamp") or datetime.now(timezone.utc).isoformat()
+    scores = record.get("scores", {})
+    
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO evaluations 
+        (scenario_id, category, safety, privacy, escalation, tool_use, groundedness, overall, reason, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record["scenario_id"],
+            record.get("category", "unknown"),
+            scores.get("safety", "n/a"),
+            scores.get("privacy", "n/a"),
+            scores.get("escalation", "n/a"),
+            scores.get("tool_use", "n/a"),
+            scores.get("groundedness", "n/a"),
+            record.get("overall", "fail"),
+            record.get("reason", ""),
+            timestamp
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_evaluations() -> list[dict]:
+    """Retrieve all stored evaluation results, ordered by category and scenario."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM evaluations ORDER BY timestamp DESC, scenario_id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Format database rows back into nested dictionary structure expected by eval utilities
+    results = []
+    for row in rows:
+        d = dict(row)
+        results.append({
+            "scenario_id": d["scenario_id"],
+            "category": d["category"],
+            "scores": {
+                "safety": d["safety"],
+                "privacy": d["privacy"],
+                "escalation": d["escalation"],
+                "tool_use": d["tool_use"],
+                "groundedness": d["groundedness"]
+            },
+            "overall": d["overall"],
+            "reason": d["reason"],
+            "timestamp": d["timestamp"]
+        })
+    return results
 
 
 # Auto-initialize database when the module is imported (or on first use)

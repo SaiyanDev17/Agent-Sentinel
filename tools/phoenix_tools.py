@@ -36,7 +36,7 @@ PHOENIX_BASE_URL = os.getenv(
     "PHOENIX_BASE_URL", "https://app.phoenix.arize.com"
 )
 PHOENIX_PROJECT_NAME = os.getenv(
-    "PHOENIX_PROJECT_NAME", "agent-red-team-autopilot"
+    "PHOENIX_PROJECT_NAME", "agent-sentinel"
 )
 PHOENIX_COLLECTOR_ENDPOINT = os.getenv(
     "PHOENIX_COLLECTOR_ENDPOINT",
@@ -488,6 +488,14 @@ async def save_eval_result(result: dict) -> dict:
         dict with confirmation.
     """
     logger.info(f"Saving eval result for scenario {result.get('scenario_id')}")
+
+    # Also save to local SQLite for the dashboard
+    try:
+        from tools.db import insert_evaluation
+        insert_evaluation(result)
+        logger.info(f"Saved eval result to SQLite for scenario {result.get('scenario_id')}")
+    except Exception as e:
+        logger.error(f"Failed to save evaluation to SQLite: {e}")
 
     client = _get_phoenix_client()
     if client:
