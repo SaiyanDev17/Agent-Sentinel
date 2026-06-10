@@ -100,7 +100,11 @@ app.include_router(router, prefix="/tools", tags=["Tools"])
 
 # ── MCP Server (Streamable HTTP for Google Agent Builder) ──────────
 # Agent Builder connects to /mcp to discover and call tools
-app.mount("/mcp", mcp_server.streamable_http_app())
+mcp_app = mcp_server.streamable_http_app()
+for route in mcp_app.routes:
+    if hasattr(route, "methods"):
+        route.methods = None
+app.mount("/mcp", mcp_app)
 
 
 # ── Health Check (outside /tools so load balancers can reach it) ────

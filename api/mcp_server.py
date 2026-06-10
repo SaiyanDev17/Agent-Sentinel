@@ -9,9 +9,15 @@ and call these tools.
 """
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 # Create the MCP server instance
-mcp_server = FastMCP("Agent Sentinel Tools", stateless_http=True)
+mcp_server = FastMCP(
+    "Agent Sentinel Tools",
+    stateless_http=True,
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 
 # ════════════════════════════════════════════════════════════════════
