@@ -110,30 +110,30 @@ class EscalationRequest(BaseModel):
 # 1. AIDASSIST TARGET AGENT TOOLS
 # ════════════════════════════════════════════════════════════════════
 
-@router.post("/register-aid", summary="Register disaster aid request")
+@router.post("/register-aid", summary="Register disaster aid request", operation_id="register_aid_request")
 async def api_register_aid(req: AidRegistrationRequest):
     """Register a new disaster aid request.
     Called by the AidAssist agent when a user needs shelter, food, transport, or medicine."""
     return register_aid_request(req.name, req.location, req.aid_type, req.urgency)
 
-@router.get("/lookup-shelter/{location}", summary="Find nearby shelters")
+@router.get("/lookup-shelter/{location}", summary="Find nearby shelters", operation_id="lookup_shelter")
 async def api_lookup_shelter(location: str):
     """Find nearby shelters by location.
     Returns a list of shelters with capacity, occupancy, and facilities."""
     return lookup_shelter(location)
 
-@router.post("/escalate", summary="Escalate to human operator")
+@router.post("/escalate", summary="Escalate to human operator", operation_id="escalate_to_human")
 async def api_escalate(req: EscalationRequest):
     """Escalate a case to a human operator.
     MUST be called for medical emergencies, unaccompanied minors, safety threats."""
     return escalate_to_human(req.reason, req.urgency_level)
 
-@router.get("/check-status/{request_id}", summary="Check aid request status")
+@router.get("/check-status/{request_id}", summary="Check aid request status", operation_id="check_aid_status")
 async def api_check_status(request_id: str):
     """Check the status of an existing aid request by its AID-XXXXXXXX ID."""
     return check_aid_status(request_id)
 
-@router.get("/dashboard-data", summary="Get all data for dashboard")
+@router.get("/dashboard-data", summary="Get all data for dashboard", operation_id="get_dashboard_data")
 async def api_dashboard_data():
     """Get all aid requests and escalation tickets for dashboard display."""
     return get_all_requests()
@@ -143,7 +143,7 @@ async def api_dashboard_data():
 # 2. SCENARIO MANAGEMENT
 # ════════════════════════════════════════════════════════════════════
 
-@router.get("/load-scenarios", summary="Load all test scenarios")
+@router.get("/load-scenarios", summary="Load all test scenarios", operation_id="load_all_scenarios")
 async def api_load_scenarios():
     """Load all adversarial test scenarios from the scenarios/ JSON files.
 
@@ -176,7 +176,7 @@ async def api_load_scenarios():
         "scenarios": all_scenarios,
     }
 
-@router.get("/load-scenarios/{category}", summary="Load scenarios by category")
+@router.get("/load-scenarios/{category}", summary="Load scenarios by category", operation_id="load_scenarios_by_category")
 async def api_load_scenarios_by_category(category: str):
     """Load test scenarios for a specific category.
 
@@ -213,13 +213,13 @@ async def api_load_scenarios_by_category(category: str):
 # 3. PHOENIX TRACING & MCP
 # ════════════════════════════════════════════════════════════════════
 
-@router.post("/init-tracing", summary="Initialize Phoenix tracing")
+@router.post("/init-tracing", summary="Initialize Phoenix tracing", operation_id="init_tracing")
 async def api_init_tracing():
     """Initialize OpenInference tracing to Arize Phoenix.
     Called automatically at startup — only needed manually if tracing failed."""
     return setup_phoenix_tracing()
 
-@router.post("/run-scenario", summary="Run scenario with tracing")
+@router.post("/run-scenario", summary="Run scenario with tracing", operation_id="run_scenario")
 async def api_run_scenario(req: RunScenarioWithTracingRequest):
     """Record a scenario run result and save trace data to Phoenix.
     Called AFTER AidAssist has responded to a scenario."""
@@ -229,35 +229,35 @@ async def api_run_scenario(req: RunScenarioWithTracingRequest):
         tool_calls_made=req.tool_calls_made,
     )
 
-@router.get("/get-traces", summary="Get recent Phoenix traces")
+@router.get("/get-traces", summary="Get recent Phoenix traces", operation_id="get_traces")
 async def api_get_traces(limit: int = 20):
     """Fetch recent traces from Arize Phoenix.
     The Trace Investigator agent calls this to find failed runs."""
     return await get_recent_traces(limit)
 
-@router.get("/get-trace/{trace_id}", summary="Get trace details")
+@router.get("/get-trace/{trace_id}", summary="Get trace details", operation_id="get_trace_details")
 async def api_get_trace(trace_id: str):
     """Get detailed spans and failures for a specific trace.
     Shows every LLM call, tool call, and response in order."""
     return await get_trace_details(trace_id)
 
-@router.post("/save-to-phoenix", summary="Save scenario to Phoenix dataset")
+@router.post("/save-to-phoenix", summary="Save scenario to Phoenix dataset", operation_id="save_to_phoenix")
 async def api_save_scenario(scenario: dict):
     """Save a test scenario to a Phoenix dataset for future experiments."""
     return await save_scenario_to_dataset(scenario)
 
-@router.post("/save-eval", summary="Save evaluation to Phoenix")
+@router.post("/save-eval", summary="Save evaluation to Phoenix", operation_id="save_eval_result")
 async def api_save_eval(result: dict):
     """Save an evaluation score to Phoenix as span annotations."""
     return await save_eval_result(result)
 
-@router.get("/get-comparison", summary="Compare before/after experiments")
+@router.get("/get-comparison", summary="Compare before/after experiments", operation_id="get_comparison")
 async def api_get_comparison(exp1_id: str, exp2_id: str):
     """Compare before/after experiment scores.
     The Release Manager agent calls this to see if improvements helped."""
     return await get_experiment_comparison(exp1_id, exp2_id)
 
-@router.post("/update-prompt", summary="Save prompt version to Phoenix")
+@router.post("/update-prompt", summary="Save prompt version to Phoenix", operation_id="update_prompt")
 async def api_update_prompt(req: PromptUpdateRequest):
     """Save an improved prompt version to Phoenix prompt registry.
     Called after human approval of an improvement."""
@@ -268,19 +268,19 @@ async def api_update_prompt(req: PromptUpdateRequest):
 # 4. EVALUATION & SCORING
 # ════════════════════════════════════════════════════════════════════
 
-@router.post("/score-response", summary="Score agent response")
+@router.post("/score-response", summary="Score agent response", operation_id="score_response")
 async def api_score_response(req: ScoreRequest):
     """Score a single agent response against a scenario's expected behavior.
     Returns pass/fail scores for safety, privacy, tool use, escalation, groundedness."""
     return score_agent_response(req.scenario, req.agent_response, req.tool_calls)
 
-@router.post("/get-release-score", summary="Calculate release-readiness")
+@router.post("/get-release-score", summary="Calculate release-readiness", operation_id="get_release_score")
 async def api_release_score(all_scores: list[dict]):
     """Aggregate all scenario scores into an overall release-readiness percentage.
     The Release Manager agent calls this to decide if the agent is safe to deploy."""
     return calculate_release_score(all_scores)
 
-@router.post("/detect-patterns", summary="Detect failure patterns")
+@router.post("/detect-patterns", summary="Detect failure patterns", operation_id="detect_patterns")
 async def api_detect_patterns(all_results: list[dict]):
     """Cluster recurring failure types across all test results.
     The Failure Pattern agent calls this to find systemic weaknesses."""
@@ -291,29 +291,29 @@ async def api_detect_patterns(all_results: list[dict]):
 # 5. HUMAN APPROVAL WORKFLOW
 # ════════════════════════════════════════════════════════════════════
 
-@router.post("/request-approval", summary="Request human approval")
+@router.post("/request-approval", summary="Request human approval", operation_id="request_approval")
 async def api_request_approval(req: ApprovalRequest):
     """Create an approval request for a proposed improvement.
     No changes are applied to the target agent without human approval."""
     return request_human_approval(req.action, req.reason, req.risk, req.proposed_change)
 
-@router.post("/apply-improvement", summary="Apply approved improvement")
+@router.post("/apply-improvement", summary="Apply approved improvement", operation_id="apply_improvement")
 async def api_apply_improvement(req: ApplyImprovementRequest):
     """Apply a human-approved improvement to the target agent.
     Will fail if the approval hasn't been granted yet."""
     return apply_approved_improvement(req.approval_id, req.prompt_patch)
 
-@router.get("/pending-approvals", summary="Get pending approvals")
+@router.get("/pending-approvals", summary="Get pending approvals", operation_id="get_pending_approvals")
 async def api_pending_approvals():
     """Get all pending approval requests waiting for human review."""
     return get_pending_approvals()
 
-@router.post("/approve/{approval_id}", summary="Approve a change")
+@router.post("/approve/{approval_id}", summary="Approve a change", operation_id="approve_change")
 async def api_approve(approval_id: str):
     """Approve a pending request. Called from the dashboard UI."""
     return approve_request(approval_id)
 
-@router.get("/evaluations", summary="Get all test evaluation results")
+@router.get("/evaluations", summary="Get all test evaluation results", operation_id="get_evaluations")
 async def api_get_evaluations():
     """Get all stored scenario evaluation results for dashboard rendering."""
     from tools.db import get_all_evaluations

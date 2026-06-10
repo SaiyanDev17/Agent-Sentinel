@@ -22,6 +22,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+# MCP server
+from fastapi_mcp import FastApiMCP
+
 # Load environment variables BEFORE importing anything else
 load_dotenv()
 
@@ -91,6 +94,11 @@ app.add_middleware(
 
 # Register API routes under /tools prefix
 app.include_router(router, prefix="/tools", tags=["Tools"])
+
+# ── MCP Server (auto-exposes all routes as MCP tools) ──────────────
+# Agent Builder connects to /mcp to discover and call tools
+mcp = FastApiMCP(app, name="Agent Sentinel Tools")
+mcp.mount()  # serves at /mcp
 
 
 # ── Health Check (outside /tools so load balancers can reach it) ────
