@@ -80,7 +80,6 @@ def setup_phoenix_tracing() -> dict:
 
         tracer_provider = register(
             project_name=PHOENIX_PROJECT_NAME,
-            endpoint=PHOENIX_COLLECTOR_ENDPOINT,
         )
         _tracer_provider = tracer_provider
 

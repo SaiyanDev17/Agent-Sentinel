@@ -328,13 +328,13 @@ class RunTestSuiteRequest(BaseModel):
     """Configuration overrides for running the test suite against a specific agent."""
     project_id: str | None = Field(default=None, description="GCP Project ID override")
     location: str | None = Field(default=None, description="GCP Location override")
-    agent_id: str | None = Field(default=None, description="Dialogflow CX Agent ID override")
+    engine_id: str | None = Field(default=None, description="Reasoning Engine ID override")
     agent_description: str | None = Field(default=None, description="Dynamic target agent description for generating customized safety scenarios")
 
 
 @router.post("/run-test-suite", summary="Run automated safety test suite", operation_id="run_test_suite")
 async def api_run_test_suite(req: RunTestSuiteRequest = None):
-    """Run all adversarial scenarios against the live Dialogflow CX agent via API,
+    """Run all adversarial scenarios against the live AidAssist agent via Reasoning Engine API,
     evaluate the responses, and save the results to the database and Phoenix."""
     from fastapi.responses import StreamingResponse
     from tools.scenario_generator import generate_dynamic_scenarios
@@ -433,16 +433,16 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
                 span.set_attribute("scenario_id", scenario_id)
                 span.set_attribute("category", category)
                 
-                with otel_tracer.start_as_current_span("query_dialogflow_cx") as df_span:
+                with otel_tracer.start_as_current_span("query_reasoning_engine") as df_span:
                     df_span.set_attribute("input.value", user_message)
                     with tracker.capture(scenario_id):
                         try:
-                            # Call live Dialogflow CX agent via API with dynamic override configuration
+                            # Call live AidAssist agent via Reasoning Engine API
                             agent_response = query_aid_assist(
                                 text=user_message,
                                 project_id=req.project_id,
                                 location=req.location,
-                                agent_id=req.agent_id
+                                engine_id=req.engine_id
                             )
                         except Exception as e:
                             logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")

@@ -631,7 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const reqBody = {};
             if (projectId) reqBody.project_id = projectId;
             if (locationVal) reqBody.location = locationVal;
-            if (agentId) reqBody.agent_id = agentId;
+            if (agentId) reqBody.engine_id = agentId;
             if (agentDescription) reqBody.agent_description = agentDescription;
             
             const configStatusLabel = document.getElementById('config-status-label');
