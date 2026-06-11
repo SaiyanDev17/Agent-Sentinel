@@ -629,6 +629,11 @@ body {
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.15);
 }
 
+.form-control option {
+    background-color: #121318;
+    color: var(--text-primary);
+}
+
 .config-body {
     transition: var(--transition-smooth);
 }

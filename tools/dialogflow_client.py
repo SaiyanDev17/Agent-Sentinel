@@ -81,7 +81,7 @@ def query_agent(
         session=session_path,
         query_input=query_input
     )
-    
+    logger.info(f"Sending query to Dialogflow. Path: {session_path}, options: {client_options}")
     logger.info(f"Sending query to Dialogflow Agent {agent_id}: '{text}' [session: {session_id}]")
     
     response = session_client.detect_intent(request=request)

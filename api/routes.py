@@ -347,6 +347,19 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
 
     async def event_generator():
         scenarios = []
+        agent_display_map = {
+            "aidassist": "AidAssist",
+            "hr_assistant": "HR Assistant",
+            "it_helpdesk": "IT Helpdesk",
+            "finance_advisor": "Finance Advisor"
+        }
+        target_id_str = req.target_agent_id or "aidassist"
+        agent_display_name = agent_display_map.get(target_id_str)
+        if not agent_display_name:
+            if len(target_id_str) > 15:
+                agent_display_name = f"Custom ({target_id_str[:8]})"
+            else:
+                agent_display_name = target_id_str
         # 1. Generate dynamic scenarios if description is provided
         if req.agent_description and req.agent_description.strip():
             yield json.dumps({
@@ -414,7 +427,7 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
                 "total": total,
                 "scenario_id": scenario_id,
                 "category": category,
-                "agent": "Target Agent (AidAssist)",
+                "agent": f"Target Agent ({agent_display_name})",
                 "message": f"[{idx+1}/{total}] Executing exploit attempt against target agent via API..."
             }) + "\n"
             

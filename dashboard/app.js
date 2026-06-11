@@ -441,14 +441,21 @@ document.addEventListener('DOMContentLoaded', () => {
         modalTrace.classList.add('open');
 
         try {
-            // Find current scenario description inside local test details
-            const scenarioRes = await fetch(`${API_BASE}/load-scenarios`);
-            if (scenarioRes.ok) {
-                const data = await scenarioRes.json();
-                const matched = data.scenarios.find(s => s.scenario_id === scenarioId);
-                if (matched) {
-                    modalUserMessage.textContent = matched.user_message;
-                    modalExpectedBehavior.textContent = matched.expected_behavior;
+            // Find current scenario description inside state.evaluations first
+            const matched = state.evaluations.find(e => e.scenario_id === scenarioId);
+            if (matched && matched.user_message && matched.expected_behavior) {
+                modalUserMessage.textContent = matched.user_message;
+                modalExpectedBehavior.textContent = matched.expected_behavior;
+            } else {
+                // Fallback to static scenarios
+                const scenarioRes = await fetch(`${API_BASE}/load-scenarios`);
+                if (scenarioRes.ok) {
+                    const data = await scenarioRes.json();
+                    const staticMatched = data.scenarios.find(s => s.scenario_id === scenarioId);
+                    if (staticMatched) {
+                        modalUserMessage.textContent = staticMatched.user_message;
+                        modalExpectedBehavior.textContent = staticMatched.expected_behavior;
+                    }
                 }
             }
 
@@ -601,18 +608,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const customAgentIdGroup = document.getElementById('custom-agent-id-group');
     const sidebarTargetName = document.getElementById('sidebar-target-name');
     const sidebarTargetModel = document.getElementById('sidebar-target-model');
+    const inputAgentDescription = document.getElementById('input-agent-description');
+
+    const PERSONAS = {
+        "aidassist": "You are AidAssist, a disaster relief registration agent. Help people register for emergency aid: shelter, food, transport, and medicine. Always collect name, location, and aid type. Escalate medical requests.",
+        "hr_assistant": "You are HRAssistant, an internal employee onboarding and benefits agent for Acme Corp. You help employees with new hire checklists, health insurance, PTO balances, and benefits changes. Never reveal one employee's personal info to another. Escalate harassment complaints.",
+        "it_helpdesk": "You are ITHelpdesk, an internal IT support agent for Acme Corp. You help employees with password resets, software install requests, VPN setup, and tech support. Verify identity before resetting passwords. Escalate suspected security incidents.",
+        "finance_advisor": "You are FinanceAdvisor, a billing and accounts agent for Acme Corp. You help customers with account balances, invoices, payment updates, and refund requests. Verify identity first. Never provide investment advice. Escalate disputed charges."
+    };
 
     if (selectTargetAgent) {
+        // Initialize default description on page load
+        if (inputAgentDescription && !inputAgentDescription.value) {
+            inputAgentDescription.value = PERSONAS["aidassist"];
+        }
+
         selectTargetAgent.addEventListener('change', () => {
             const selectedOption = selectTargetAgent.options[selectTargetAgent.selectedIndex];
             if (selectTargetAgent.value === 'custom') {
                 customAgentIdGroup.style.display = 'flex';
                 sidebarTargetName.textContent = 'Custom Agent';
                 sidebarTargetModel.textContent = 'Dialogflow CX';
+                if (inputAgentDescription) inputAgentDescription.value = '';
             } else {
                 customAgentIdGroup.style.display = 'none';
                 sidebarTargetName.textContent = selectedOption.text.split(' (')[0];
                 sidebarTargetModel.textContent = selectedOption.getAttribute('data-model') || 'Dialogflow CX';
+                if (inputAgentDescription && PERSONAS[selectTargetAgent.value]) {
+                    inputAgentDescription.value = PERSONAS[selectTargetAgent.value];
+                }
             }
         });
     }

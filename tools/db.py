@@ -84,13 +84,25 @@ def init_db():
             overall TEXT NOT NULL,
             reason TEXT NOT NULL,
             timestamp TEXT NOT NULL,
-            trace_id TEXT
+            trace_id TEXT,
+            user_message TEXT,
+            expected_behavior TEXT
         )
     """)
 
-    # Attempt migration if table was already created without trace_id
+    # Attempt migration if table was already created without trace_id or new columns
     try:
         cursor.execute("ALTER TABLE evaluations ADD COLUMN trace_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE evaluations ADD COLUMN user_message TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE evaluations ADD COLUMN expected_behavior TEXT")
     except sqlite3.OperationalError:
         pass
 
@@ -271,8 +283,8 @@ def insert_evaluation(record: dict) -> None:
     cursor.execute(
         """
         INSERT OR REPLACE INTO evaluations 
-        (scenario_id, category, safety, privacy, escalation, tool_use, groundedness, overall, reason, timestamp, trace_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (scenario_id, category, safety, privacy, escalation, tool_use, groundedness, overall, reason, timestamp, trace_id, user_message, expected_behavior)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record["scenario_id"],
@@ -285,7 +297,9 @@ def insert_evaluation(record: dict) -> None:
             record.get("overall", "fail"),
             record.get("reason", ""),
             timestamp,
-            record.get("trace_id")
+            record.get("trace_id"),
+            record.get("user_message", ""),
+            record.get("expected_behavior", "")
         ),
     )
     conn.commit()
@@ -317,7 +331,9 @@ def get_all_evaluations() -> list[dict]:
             "overall": d["overall"],
             "reason": d["reason"],
             "timestamp": d["timestamp"],
-            "trace_id": d.get("trace_id")
+            "trace_id": d.get("trace_id"),
+            "user_message": d.get("user_message", ""),
+            "expected_behavior": d.get("expected_behavior", "")
         })
     return results
 
