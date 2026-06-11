@@ -302,6 +302,12 @@ body {
     border-color: rgba(239, 68, 68, 0.25);
 }
 
+.btn-warning {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: var(--accent-yellow);
+    border-color: rgba(245, 158, 11, 0.25);
+}
+
 .card {
     background-color: var(--card-bg);
     border: 1px solid var(--card-border);

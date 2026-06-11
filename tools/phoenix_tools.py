@@ -422,30 +422,43 @@ async def run_scenario_with_tracing(
             # Get or create dataset
             try:
                 dataset = client.datasets.get_dataset(dataset=dataset_name)
+                # Add the run as a dataset example
+                client.datasets.add_examples_to_dataset(
+                    dataset=dataset.get("id") or dataset.get("name"),
+                    inputs=[{
+                        "scenario_id": run_record.get("scenario_id", "unknown"),
+                        "user_message": run_record.get("user_message", ""),
+                        "category": run_record.get("category", "unknown"),
+                    }],
+                    outputs=[{
+                        "response": run_record.get("actual_response", ""),
+                        "tool_calls": json.dumps(run_record.get("tool_calls", [])),
+                    }],
+                    metadata=[{
+                        "run_id": run_id,
+                        "critical": run_record.get("critical", False),
+                        "timestamp": now,
+                    }],
+                )
             except Exception:
                 dataset = client.datasets.create_dataset(
                     name=dataset_name,
                     dataset_description="Red-team scenario run results",
+                    inputs=[{
+                        "scenario_id": run_record.get("scenario_id", "unknown"),
+                        "user_message": run_record.get("user_message", ""),
+                        "category": run_record.get("category", "unknown"),
+                    }],
+                    outputs=[{
+                        "response": run_record.get("actual_response", ""),
+                        "tool_calls": json.dumps(run_record.get("tool_calls", [])),
+                    }],
+                    metadata=[{
+                        "run_id": run_id,
+                        "critical": run_record.get("critical", False),
+                        "timestamp": now,
+                    }],
                 )
-
-            # Add the run as a dataset example
-            client.datasets.add_examples_to_dataset(
-                dataset=dataset.get("id") or dataset.get("name"),
-                inputs=[{
-                    "scenario_id": run_record.get("scenario_id", "unknown"),
-                    "user_message": run_record.get("user_message", ""),
-                    "category": run_record.get("category", "unknown"),
-                }],
-                outputs=[{
-                    "response": run_record.get("actual_response", ""),
-                    "tool_calls": json.dumps(run_record.get("tool_calls", [])),
-                }],
-                metadata=[{
-                    "run_id": run_id,
-                    "critical": run_record.get("critical", False),
-                    "timestamp": now,
-                }],
-            )
             logger.info(f"Run {run_id} saved to Phoenix dataset '{dataset_name}'")
             run_record["phoenix_status"] = "saved"
             run_record["source"] = "phoenix_client"
@@ -479,26 +492,36 @@ async def save_scenario_to_dataset(scenario: dict) -> dict:
 
             try:
                 dataset = client.datasets.get_dataset(dataset=dataset_name)
+                client.datasets.add_examples_to_dataset(
+                    dataset=dataset.get("id") or dataset.get("name"),
+                    inputs=[{
+                        "user_message": scenario.get("user_message", ""),
+                        "category": scenario.get("category", ""),
+                    }],
+                    outputs=[{
+                        "expected_behavior": scenario.get("expected_behavior", ""),
+                    }],
+                    metadata=[{
+                        "scenario_id": scenario.get("scenario_id", ""),
+                        "critical": scenario.get("critical", False),
+                    }],
+                )
             except Exception:
                 dataset = client.datasets.create_dataset(
                     name=dataset_name,
                     dataset_description="Adversarial test scenarios for red-team testing",
+                    inputs=[{
+                        "user_message": scenario.get("user_message", ""),
+                        "category": scenario.get("category", ""),
+                    }],
+                    outputs=[{
+                        "expected_behavior": scenario.get("expected_behavior", ""),
+                    }],
+                    metadata=[{
+                        "scenario_id": scenario.get("scenario_id", ""),
+                        "critical": scenario.get("critical", False),
+                    }],
                 )
-
-            client.datasets.add_examples_to_dataset(
-                dataset=dataset.get("id") or dataset.get("name"),
-                inputs=[{
-                    "user_message": scenario.get("user_message", ""),
-                    "category": scenario.get("category", ""),
-                }],
-                outputs=[{
-                    "expected_behavior": scenario.get("expected_behavior", ""),
-                }],
-                metadata=[{
-                    "scenario_id": scenario.get("scenario_id", ""),
-                    "critical": scenario.get("critical", False),
-                }],
-            )
 
             return {
                 "status": "saved",
@@ -547,24 +570,32 @@ async def save_eval_result(result: dict) -> dict:
 
             try:
                 dataset = client.datasets.get_dataset(dataset=dataset_name)
+                client.datasets.add_examples_to_dataset(
+                    dataset=dataset.get("id") or dataset.get("name"),
+                    inputs=[{
+                        "scenario_id": result.get("scenario_id", ""),
+                        "category": result.get("category", ""),
+                    }],
+                    outputs=[{
+                        "scores": json.dumps(result.get("scores", {})),
+                        "overall": result.get("overall", ""),
+                        "reason": result.get("reason", ""),
+                    }],
+                )
             except Exception:
                 dataset = client.datasets.create_dataset(
                     name=dataset_name,
                     dataset_description="Evaluation results from red-team testing",
+                    inputs=[{
+                        "scenario_id": result.get("scenario_id", ""),
+                        "category": result.get("category", ""),
+                    }],
+                    outputs=[{
+                        "scores": json.dumps(result.get("scores", {})),
+                        "overall": result.get("overall", ""),
+                        "reason": result.get("reason", ""),
+                    }],
                 )
-
-            client.datasets.add_examples_to_dataset(
-                dataset=dataset.get("id") or dataset.get("name"),
-                inputs=[{
-                    "scenario_id": result.get("scenario_id", ""),
-                    "category": result.get("category", ""),
-                }],
-                outputs=[{
-                    "scores": json.dumps(result.get("scores", {})),
-                    "overall": result.get("overall", ""),
-                    "reason": result.get("reason", ""),
-                }],
-            )
 
             return {
                 "status": "saved",

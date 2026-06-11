@@ -42,8 +42,8 @@
                 </div>
                 <div class="agent-info">
                     <span class="label">Target Agent</span>
-                    <span class="name">AidAssist</span>
-                    <span class="status-indicator online">Gemini 2.5 Flash</span>
+                    <span class="name" id="sidebar-target-name">AidAssist</span>
+                    <span class="status-indicator online" id="sidebar-target-model">Gemini 2.5 Flash</span>
                 </div>
             </div>
         </aside>
@@ -61,6 +61,7 @@
                         <i class="fa-solid fa-circle-check"></i> <span id="system-gate-text">Initializing</span>
                     </div>
                     <button class="btn btn-success" id="btn-run-tests" style="margin-right: 0.5rem;"><i class="fa-solid fa-play"></i> Run Safety Tests</button>
+                    <button class="btn btn-warning" id="btn-seed" style="margin-right: 0.5rem;"><i class="fa-solid fa-seedling"></i> Seed Demo Data</button>
                     <button class="btn btn-danger" id="btn-reset" style="margin-right: 0.5rem;"><i class="fa-solid fa-trash-can"></i> Reset Console</button>
                     <button class="btn btn-primary" id="btn-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh Console</button>
                 </div>
@@ -88,8 +89,28 @@
                                 <input type="text" id="input-location" class="form-control" placeholder="e.g. us-central1">
                             </div>
                             <div class="form-group">
-                                <label for="input-agent-id" class="form-label">Reasoning Engine ID</label>
-                                <input type="text" id="input-agent-id" class="form-control" placeholder="e.g. 7078750967377690624">
+                                <label for="select-target-agent" class="form-label">Target Agent</label>
+                                <select id="select-target-agent" class="form-control">
+                                    <option value="aidassist" data-agent-id="aidassist" data-model="Gemini 2.5 Flash">AidAssist (Disaster Relief)</option>
+                                    <option value="hr_assistant" data-agent-id="hr_assistant" data-model="Gemini 2.5 Flash">HR Assistant (Employee Benefits)</option>
+                                    <option value="it_helpdesk" data-agent-id="it_helpdesk" data-model="Gemini 2.5 Flash">IT Helpdesk (Tech Support)</option>
+                                    <option value="finance_advisor" data-agent-id="finance_advisor" data-model="Gemini 2.5 Flash">Finance Advisor (Billing & Payments)</option>
+                                    <option value="custom">Custom Agent ID...</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="custom-agent-id-group" style="display: none;">
+                                <label for="input-agent-id" class="form-label">Custom Target Agent ID</label>
+                                <input type="text" id="input-agent-id" class="form-control" placeholder="e.g. 3f4be9c4-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                            </div>
+                            <div class="form-group">
+                                <label for="select-attack-vector" class="form-label">Attack Vector</label>
+                                <select id="select-attack-vector" class="form-control">
+                                    <option value="all">Run All Attacks</option>
+                                    <option value="prompt_injection">Prompt Injections Only</option>
+                                    <option value="privacy">Privacy Leaks Only</option>
+                                    <option value="toxicity">Toxicity/Safety Only</option>
+                                    <option value="off_topic">Off-Topic/Ambiguity Only</option>
+                                </select>
                             </div>
                         </div>
                         <div class="form-group mt-4" style="margin-top: 1rem;">

@@ -60,7 +60,7 @@ def query_agent(
     """
     project_id = project_id or os.getenv("GOOGLE_CLOUD_PROJECT", "agent-sentinel-498916")
     location = location or os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-    agent_id = agent_id or os.getenv("DIALOGFLOW_AGENT_ID", "670498a9-4672-466c-bad0-bc10103822ee")
+    agent_id = agent_id or os.getenv("AIDASSIST_AGENT_ID") or os.getenv("DIALOGFLOW_AGENT_ID", "3f4be9c4-06b8-4287-9c38-864e73681191")
     session_id = session_id or f"sentinel_test_{uuid.uuid4().hex[:12]}"
 
     # Define the client endpoint based on location
@@ -102,19 +102,53 @@ def query_agent(
     return agent_response
 
 
-def query_aid_assist(
+def query_target_agent(
     text: str,
     project_id: str = None,
     location: str = None,
-    engine_id: str = None,
+    agent_id: str = None,
     session_id: str = None,
 ) -> str:
-    """Wrapper function to query the agent mapping engine_id to agent_id for compatibility with routes."""
+    """Send an attack message to the target agent (e.g., AidAssist).
+    Uses a unique session_id per test scenario for isolation."""
+    # Resolve logical agent keys to real UUIDs from environment
+    if agent_id == "aidassist":
+        agent_id = os.getenv("AIDASSIST_AGENT_ID")
+    elif agent_id == "hr_assistant":
+        agent_id = os.getenv("HR_AGENT_ID") or os.getenv("AIDASSIST_AGENT_ID")
+    elif agent_id == "it_helpdesk":
+        agent_id = os.getenv("IT_AGENT_ID") or os.getenv("AIDASSIST_AGENT_ID")
+    elif agent_id == "finance_advisor":
+        agent_id = os.getenv("FINANCE_AGENT_ID") or os.getenv("AIDASSIST_AGENT_ID")
+        
+    agent_id = agent_id or os.getenv("AIDASSIST_AGENT_ID")
+    session_id = session_id or f"target_{uuid.uuid4().hex[:12]}"
     return query_agent(
         text=text,
         project_id=project_id,
         location=location,
-        agent_id=engine_id,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+
+
+def query_qacommander(
+    text: str,
+    project_id: str = None,
+    location: str = None,
+    session_id: str = None,
+) -> str:
+    """Send a message to QACommander to generate dynamic attack scenarios.
+    Returns the raw JSON response from QACommander."""
+    agent_id = os.getenv("QACOMMANDER_AGENT_ID")
+    if not agent_id:
+        raise ValueError("QACOMMANDER_AGENT_ID env var not set")
+    session_id = session_id or f"commander_{uuid.uuid4().hex[:12]}"
+    return query_agent(
+        text=text,
+        project_id=project_id,
+        location=location,
+        agent_id=agent_id,
         session_id=session_id,
     )
 

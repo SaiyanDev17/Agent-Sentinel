@@ -596,6 +596,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Target agent dropdown change handler
+    const selectTargetAgent = document.getElementById('select-target-agent');
+    const customAgentIdGroup = document.getElementById('custom-agent-id-group');
+    const sidebarTargetName = document.getElementById('sidebar-target-name');
+    const sidebarTargetModel = document.getElementById('sidebar-target-model');
+
+    if (selectTargetAgent) {
+        selectTargetAgent.addEventListener('change', () => {
+            const selectedOption = selectTargetAgent.options[selectTargetAgent.selectedIndex];
+            if (selectTargetAgent.value === 'custom') {
+                customAgentIdGroup.style.display = 'flex';
+                sidebarTargetName.textContent = 'Custom Agent';
+                sidebarTargetModel.textContent = 'Dialogflow CX';
+            } else {
+                customAgentIdGroup.style.display = 'none';
+                sidebarTargetName.textContent = selectedOption.text.split(' (')[0];
+                sidebarTargetModel.textContent = selectedOption.getAttribute('data-model') || 'Dialogflow CX';
+            }
+        });
+    }
+
+
     // ── Button and Search Action Listeners ─────────────────────────────────
 
     btnRefresh.addEventListener('click', fetchDashboardData);
@@ -625,17 +647,24 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const projectId = document.getElementById('input-project-id').value.trim();
             const locationVal = document.getElementById('input-location').value.trim();
-            const agentId = document.getElementById('input-agent-id').value.trim();
+            const selectTarget = document.getElementById('select-target-agent');
+            const selectedOption = selectTarget ? selectTarget.options[selectTarget.selectedIndex] : null;
+            const targetAgentIdVal = (selectTarget && selectTarget.value === 'custom') ? 
+                document.getElementById('input-agent-id').value.trim() : 
+                (selectedOption ? selectedOption.getAttribute('data-agent-id') : '');
             const agentDescription = document.getElementById('input-agent-description').value.trim();
+            const selectAttackVector = document.getElementById('select-attack-vector');
+            const attackVector = selectAttackVector ? selectAttackVector.value : 'all';
             
             const reqBody = {};
             if (projectId) reqBody.project_id = projectId;
             if (locationVal) reqBody.location = locationVal;
-            if (agentId) reqBody.engine_id = agentId;
+            if (targetAgentIdVal) reqBody.target_agent_id = targetAgentIdVal;
             if (agentDescription) reqBody.agent_description = agentDescription;
+            if (attackVector) reqBody.attack_vector = attackVector;
             
             const configStatusLabel = document.getElementById('config-status-label');
-            if (projectId || locationVal || agentId || agentDescription) {
+            if (projectId || locationVal || targetAgentIdVal || agentDescription || attackVector !== 'all') {
                 configStatusLabel.textContent = "Using Custom Configuration";
                 configStatusLabel.style.color = "var(--accent-blue)";
             } else {
@@ -663,7 +692,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (agent.includes("Generator")) {
                     progressActiveAgent.style.backgroundColor = "rgba(192, 132, 252, 0.1)";
                     progressActiveAgent.style.color = "#c084fc";
-                } else if (agent.includes("AidAssist") || agent.includes("Agent")) {
+                } else if (agent.includes("AidAssist") || agent.includes("Agent") || agent.includes("Target")) {
                     progressActiveAgent.style.backgroundColor = "rgba(96, 165, 250, 0.1)";
                     progressActiveAgent.style.color = "#60a5fa";
                 } else if (agent.includes("Judge")) {
@@ -783,6 +812,30 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 btnReset.disabled = false;
                 btnReset.innerHTML = '<i class="fa-solid fa-trash-can"></i> Reset Console';
+            }
+        });
+    }
+
+    // Seed Dashboard Action
+    const btnSeed = document.getElementById('btn-seed');
+    if (btnSeed) {
+        btnSeed.addEventListener('click', async () => {
+            btnSeed.disabled = true;
+            btnSeed.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Seeding...';
+            try {
+                const res = await fetch(`${API_BASE}/seed`, { method: 'POST' });
+                if (res.ok) {
+                    await fetchDashboardData();
+                    alert("Dashboard successfully seeded with demo data!");
+                } else {
+                    alert(`Seed failed: ${res.statusText}`);
+                }
+            } catch (error) {
+                console.error("Error seeding dashboard:", error);
+                alert(`Seed failed: ${error.message}`);
+            } finally {
+                btnSeed.disabled = false;
+                btnSeed.innerHTML = '<i class="fa-solid fa-seedling"></i> Seed Demo Data';
             }
         });
     }
