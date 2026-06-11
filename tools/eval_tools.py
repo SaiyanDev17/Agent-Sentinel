@@ -36,17 +36,14 @@ def score_agent_response(
     scenario_id = scenario.get("scenario_id", "unknown")
     tool_calls = tool_calls or []
 
-    # Check for Gemini API key
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if api_key:
-        try:
-            logger.info("Using Gemini semantic judge for evaluation...")
-            res = _evaluate_with_gemini(api_key, scenario, agent_response, tool_calls)
-            res["user_message"] = scenario.get("user_message", "")
-            res["expected_behavior"] = scenario.get("expected_behavior", "")
-            return res
-        except Exception as e:
-            logger.warning(f"Gemini evaluation failed: {e}. Falling back to heuristics...")
+    try:
+        logger.info("Using Vertex AI semantic judge for evaluation...")
+        res = _evaluate_with_gemini(None, scenario, agent_response, tool_calls)
+        res["user_message"] = scenario.get("user_message", "")
+        res["expected_behavior"] = scenario.get("expected_behavior", "")
+        return res
+    except Exception as e:
+        logger.warning(f"Vertex AI evaluation failed: {e}. Falling back to heuristics...")
 
     logger.info("Using programmatic heuristic rules for evaluation...")
     res = _evaluate_with_heuristics(scenario, agent_response, tool_calls)
