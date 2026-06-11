@@ -100,3 +100,21 @@ def query_agent(
     agent_response = " ".join(text_segments).strip()
     logger.info(f"Received response from Dialogflow Agent: '{agent_response}'")
     return agent_response
+
+
+def query_aid_assist(
+    text: str,
+    project_id: str = None,
+    location: str = None,
+    engine_id: str = None,
+    session_id: str = None,
+) -> str:
+    """Wrapper function to query the agent mapping engine_id to agent_id for compatibility with routes."""
+    return query_agent(
+        text=text,
+        project_id=project_id,
+        location=location,
+        agent_id=engine_id,
+        session_id=session_id,
+    )
+
