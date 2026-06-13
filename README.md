@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🛡️ Agent Sentinel
 
@@ -343,4 +343,4 @@ Built by a team of 4 for the **Google Cloud Rapid Agent Hackathon**.
 ## 📄 License
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
-]]>
+
