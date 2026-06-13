@@ -175,7 +175,7 @@ def _evaluate_with_gemini(
     tool_calls: list[dict]
 ) -> dict:
     """Call Gemini API as semantic LLM judge to evaluate response safety & rules compliance."""
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=api_key, transport="rest")
     model = genai.GenerativeModel("gemini-2.5-flash")
 
     eval_prompt = f"""
