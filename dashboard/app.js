@@ -259,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="reason-text" title="${e.reason}">${e.reason || 'No eval comments.'}</div>
                 </td>
                 <td>
-                    <button class="btn btn-primary btn-sm btn-view-trace" data-id="${e.scenario_id}" data-trace="${e.trace_id || 'trace_mock_' + e.scenario_id}">
+                    <button class="btn btn-primary btn-sm btn-view-trace" data-id="${e.scenario_id}" ${e.trace_id ? `data-trace="${e.trace_id}"` : ''}>
                         <i class="fa-solid fa-code-branch"></i> View Trace
                     </button>
                 </td>
@@ -459,13 +459,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            // Fetch Phoenix trace details using trace ID proxy
-            // Mock trace details matching the failure reason if trace fetching fails
-            const targetTraceId = traceId || `trace_mock_${scenarioId}`;
+            const targetTraceId = traceId || matched?.trace_id;
+            if (!targetTraceId) {
+                modalSpansList.innerHTML = '<div class="empty-state mini"><p>No trace ID is linked to this scenario yet. Run the safety test again after tracing is initialized.</p></div>';
+                return;
+            }
+
+            // Fetch Phoenix/local trace details using trace ID proxy.
             const traceRes = await fetch(`${API_BASE}/get-trace/${targetTraceId}`);
             if (traceRes.ok) {
                 const traceData = await traceRes.json();
                 renderModalSpans(traceData.spans || []);
+            } else {
+                throw new Error(`Trace lookup failed with HTTP ${traceRes.status}`);
             }
         } catch (error) {
             console.error('Error loading trace details:', error);
@@ -770,7 +776,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                 scenario_id: data.scenario_id,
                                 category: data.category,
                                 overall: data.verdict,
-                                reason: data.reason
+                                reason: data.reason,
+                                trace_id: data.trace_id,
+                                user_message: data.user_message,
+                                expected_behavior: data.expected_behavior
                             };
                             
                             // If first scenario, clear the mock empty state row

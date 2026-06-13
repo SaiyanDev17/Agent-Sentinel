@@ -42,6 +42,7 @@ from tools.phoenix_tools import (
     get_experiment_comparison,
     update_prompt_in_phoenix,
     get_tracer_provider,
+    record_local_trace,
 )
 from tools.eval_tools import (
     score_agent_response,
@@ -341,6 +342,8 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
     from fastapi.responses import StreamingResponse
     from tools.scenario_generator import generate_scenarios_via_cx
     import asyncio
+    import time
+    import uuid
     
     if req is None:
         req = RunTestSuiteRequest()
@@ -443,13 +446,20 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
                 otel_tracer = trace.get_tracer("agent-sentinel")
             
             trace_id = None
+            local_spans = []
+            scenario_start = time.perf_counter()
             with otel_tracer.start_as_current_span("run_test_scenario") as span:
                 span.set_attribute("input.value", user_message)
                 span.set_attribute("scenario_id", scenario_id)
                 span.set_attribute("category", category)
+                span.set_attribute("openinference.span.kind", "CHAIN")
                 
+                query_start = time.perf_counter()
+                agent_response = ""
+                tool_calls = []
                 with otel_tracer.start_as_current_span("query_reasoning_engine") as df_span:
                     df_span.set_attribute("input.value", user_message)
+                    df_span.set_attribute("openinference.span.kind", "LLM")
                     with tracker.capture(scenario_id):
                         try:
                             # Call live AidAssist agent via Dialogflow CX API
@@ -462,18 +472,55 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
                         except Exception as e:
                             logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")
                             agent_response = f"Agent failed to respond: {e}"
+                            df_span.record_exception(e)
+                            df_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                         tool_calls = tracker.captured_tool_calls
                     df_span.set_attribute("output.value", agent_response)
+                query_duration_ms = int((time.perf_counter() - query_start) * 1000)
+                local_spans.append({
+                    "span_id": f"{scenario_id}-query",
+                    "name": "query_target_agent",
+                    "span_kind": "LLM",
+                    "status": "ERROR" if agent_response.startswith("Agent failed to respond:") else "OK",
+                    "duration_ms": query_duration_ms,
+                    "input": user_message,
+                    "output": agent_response,
+                    "error": agent_response.removeprefix("Agent failed to respond: ").strip()
+                    if agent_response.startswith("Agent failed to respond:") else None,
+                })
                 
                 # Log any captured tool calls as child spans under the parent run span
-                for tc in tool_calls:
+                for tc_index, tc in enumerate(tool_calls, start=1):
                     with otel_tracer.start_as_current_span(tc["name"]) as tc_span:
-                        tc_span.set_attribute("span_kind", "TOOL")
+                        tc_span.set_attribute("openinference.span.kind", "TOOL")
                         tc_span.set_attribute("input.value", json.dumps(tc.get("arguments", {})))
                         tc_span.set_attribute("output.value", "Webhook tool execution completed.")
+                    local_spans.append({
+                        "span_id": f"{scenario_id}-tool-{tc_index}",
+                        "name": tc.get("name", "tool_call"),
+                        "span_kind": "TOOL",
+                        "status": "OK",
+                        "duration_ms": None,
+                        "input": json.dumps(tc.get("arguments", {})),
+                        "output": "Webhook tool execution completed.",
+                        "error": None,
+                    })
                 
                 # Extract the 32-character hex trace ID
-                trace_id = format(span.get_span_context().trace_id, "032x")
+                raw_trace_id = format(span.get_span_context().trace_id, "032x")
+                trace_id = raw_trace_id if raw_trace_id.strip("0") else f"local_{uuid.uuid4().hex}"
+
+            local_spans.insert(0, {
+                "span_id": f"{scenario_id}-run",
+                "name": "run_test_scenario",
+                "span_kind": "CHAIN",
+                "status": "OK",
+                "duration_ms": int((time.perf_counter() - scenario_start) * 1000),
+                "input": user_message,
+                "output": agent_response,
+                "error": None,
+            })
+            record_local_trace(trace_id, local_spans)
 
             # Yield Eval Judge active
             yield json.dumps({
@@ -502,6 +549,9 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
                 "total": total,
                 "scenario_id": scenario_id,
                 "category": category,
+                "trace_id": trace_id,
+                "user_message": scenario.get("user_message", ""),
+                "expected_behavior": scenario.get("expected_behavior", ""),
                 "verdict": scores.get("overall", "fail"),
                 "reason": scores.get("reason", ""),
                 "message": f"[{idx+1}/{total}] Scan finished. Verdict: {scores.get('overall', 'fail').upper()}"

@@ -249,8 +249,8 @@ Edit `.env` with your credentials:
 | `AIDASSIST_AGENT_ID` | Dialogflow CX Agent UUID for the target agent |
 | `QACOMMANDER_AGENT_ID` | Dialogflow CX Agent UUID for the QA orchestrator |
 | `PHOENIX_API_KEY` | Arize Phoenix API key from Settings → API Keys |
-| `PHOENIX_BASE_URL` | Phoenix workspace URL |
-| `PHOENIX_COLLECTOR_ENDPOINT` | Must be `https://app.phoenix.arize.com/v1/traces` |
+| `PHOENIX_BASE_URL` | Phoenix workspace URL, e.g. `https://app.phoenix.arize.com/s/your-space` |
+| `PHOENIX_COLLECTOR_ENDPOINT` | Workspace trace endpoint, e.g. `https://app.phoenix.arize.com/s/your-space/v1/traces` |
 
 ### 3. Run Locally
 
@@ -343,4 +343,3 @@ Built by a team of 4 for the **Google Cloud Rapid Agent Hackathon**.
 ## 📄 License
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
-
