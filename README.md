@@ -989,18 +989,6 @@ Copyright (c) 2026 Agent Sentinel Team
 
 ---
 
-## 📝 Resume Bullet
-
-```
-Built Agent Sentinel, a Gemini and Arize Phoenix-powered multi-agent QA platform 
-that autonomously generates adversarial scenarios via Dialogflow CX Playbooks, 
-stress-tests AI agents across 6 safety categories, traces every run with 
-OpenInference, evaluates responses with a dual-mode LLM judge, and produces 
-evidence-backed release-readiness scores with human-approved guardrail improvements.
-```
-
----
-
 <p align="center">
   <b>Agent Sentinel</b> — Because trust must be earned before deployment.
 </p>
