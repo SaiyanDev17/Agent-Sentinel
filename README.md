@@ -2,7 +2,7 @@
 
 # 🛡️ Agent Sentinel
 
-### Automated Red-Team Safety Auditor for AI Agents
+### Automated Safety Auditor for AI Agents
 
 **Stress-test any AI agent for prompt injection, data leaks, hallucinations, and unsafe behavior — before it reaches production.**
 
