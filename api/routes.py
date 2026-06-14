@@ -560,6 +560,15 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
             
         # Calculate release-readiness score
         release_score = calculate_release_score(all_scores)
+        
+        # Flush OpenTelemetry traces before returning, for serverless environments (Cloud Run/Vercel)
+        try:
+            tp = get_tracer_provider()
+            if tp and hasattr(tp, "force_flush"):
+                tp.force_flush(timeout_millis=2000)
+        except Exception as e:
+            logger.warning(f"Failed to flush OTEL traces: {e}")
+            
         yield json.dumps({
             "status": "complete",
             "release_score": release_score,
@@ -567,7 +576,6 @@ async def api_run_test_suite(req: RunTestSuiteRequest = None):
         }) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
-
 
 
 @router.get("/evaluations", summary="Get all test evaluation results", operation_id="get_evaluations")
