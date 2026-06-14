@@ -10,6 +10,13 @@
 
 ### Autonomous Red-Team QA Lab for AI Agents — Powered by Gemini, Arize Phoenix & Google Cloud Conversational Agents
 
+<p align="center">
+  <a href="https://github.com/SaiyanDev17/Agent-Sentinel"><b>🔗 GitHub</b></a> |
+  <a href="https://agent-sentinel-928195950401.us-central1.run.app"><b>🔗 Live Demo</b></a> |
+  <a href="https://devpost.com/software/agent-sentinel-xy7oe0"><b>🔗 Devpost</b></a> |
+  <a href="https://youtu.be/fWEn037oP8E"><b>🔗 Demo Video</b></a>
+</p>
+
 > *Before a company deploys an AI agent, **Agent Sentinel** asks:*
 >
 > **Can this agent be trusted under messy, adversarial, privacy-sensitive, and high-stakes real-world conditions?**
@@ -985,18 +992,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ```
 Copyright (c) 2026 Agent Sentinel Team
-```
-
----
-
-## 📝 Resume Bullet
-
-```
-Built Agent Sentinel, a Gemini and Arize Phoenix-powered multi-agent QA platform 
-that autonomously generates adversarial scenarios via Dialogflow CX Playbooks, 
-stress-tests AI agents across 6 safety categories, traces every run with 
-OpenInference, evaluates responses with a dual-mode LLM judge, and produces 
-evidence-backed release-readiness scores with human-approved guardrail improvements.
 ```
 
 ---
