@@ -12,6 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
         activeLogsTab: 'requests' // 'requests' | 'tickets'
     };
 
+    let scanActive = false;
+    let pollTimer = null;
+    const POLL_INTERVAL_MS = 15000;
+    const KNOWN_AGENTS = [
+        'Jailbreaker', 'PII Sniffer', 'Toxicity Troll', 'Off-Topic Distractor',
+        'Tool Abuse Scanner', 'Escalation Probe', 'Hallucination Hunter', 'Ambiguity Tester',
+        'Eval Judge', 'Red-Team Generator', 'Scan Orchestrator'
+    ];
+
     // DOM Elements
     const btnRefresh = document.getElementById('btn-refresh');
     const btnRunTests = document.getElementById('btn-run-tests');
@@ -50,29 +59,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Data Fetching Functions ──────────────────────────────────────────
 
     async function fetchDashboardData() {
+        if (scanActive) return;
         showLoadingState();
         try {
-            // Fetch Evaluations
-            const evalsRes = await fetch(`${API_BASE}/evaluations`);
-            if (evalsRes.ok) state.evaluations = await evalsRes.json();
+            const [evalsRes, approvalsRes, dbRes] = await Promise.all([
+                fetch(`${API_BASE}/evaluations`),
+                fetch(`${API_BASE}/pending-approvals`),
+                fetch(`${API_BASE}/dashboard-data`)
+            ]);
 
-            // Fetch Pending Approvals
-            const approvalsRes = await fetch(`${API_BASE}/pending-approvals`);
+            if (evalsRes.ok) state.evaluations = await evalsRes.json();
             if (approvalsRes.ok) {
                 const data = await approvalsRes.json();
                 state.approvals = data.approvals || [];
             }
-
-            // Fetch Aid Requests and Escalations
-            const dbRes = await fetch(`${API_BASE}/dashboard-data`);
             if (dbRes.ok) {
                 const dbData = await dbRes.json();
                 state.aidRequests = dbData.aid_requests || [];
                 state.escalations = dbData.escalation_tickets || [];
             }
 
-            // Render UI
             updateUI();
+            hideLoadingState();
         } catch (error) {
             console.error('Error fetching dashboard data:', error);
             showErrorState(error.message);
@@ -213,6 +221,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 labelStatus.textContent = 'VULNERABLE';
             }
         });
+    }
+
+    function appendEvalRow(evalRecord) {
+        const searchTerm = searchTestsInput.value.toLowerCase().trim();
+        const matches = !searchTerm || (
+            evalRecord.scenario_id.toLowerCase().includes(searchTerm) ||
+            evalRecord.category.toLowerCase().includes(searchTerm) ||
+            (evalRecord.reason || '').toLowerCase().includes(searchTerm)
+        );
+        if (!matches) return;
+
+        const emptyRow = tbodyTestResults.querySelector('.empty-state');
+        if (emptyRow) emptyRow.remove();
+
+        const tr = document.createElement('tr');
+        tr.dataset.scenarioId = evalRecord.scenario_id;
+        const categoryNiceName = evalRecord.category.replace(/_/g, ' ');
+        tr.innerHTML = `
+            <td><span class="scenario-tag">${evalRecord.scenario_id}</span></td>
+            <td><span class="category-label">${categoryNiceName}</span></td>
+            <td>
+                <span class="badge ${evalRecord.overall === 'pass' ? 'pass' : 'fail'}">
+                    <i class="fa-solid ${evalRecord.overall === 'pass' ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+                    ${evalRecord.overall === 'pass' ? 'Pass' : 'Fail'}
+                </span>
+            </td>
+            <td><div class="reason-text" title="${escapeHtml(evalRecord.reason)}">${escapeHtml(evalRecord.reason || 'No eval comments.')}</div></td>
+            <td>
+                <button class="btn btn-primary btn-sm btn-view-trace" data-id="${evalRecord.scenario_id}" ${evalRecord.trace_id ? `data-trace="${evalRecord.trace_id}"` : ''}>
+                    <i class="fa-solid fa-code-branch"></i> View Trace
+                </button>
+            </td>
+        `;
+        tbodyTestResults.appendChild(tr);
+        renderStats();
+        renderHeatmap();
     }
 
     function renderTestResults() {
@@ -542,9 +586,118 @@ document.addEventListener('DOMContentLoaded', () => {
         btnRefresh.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...';
     }
 
-    function showErrorState(msg) {
+    function hideLoadingState() {
         btnRefresh.disabled = false;
         btnRefresh.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Refresh Console';
+    }
+
+    function showErrorState(msg) {
+        hideLoadingState();
+    }
+
+    function appendTerminalLine(terminalEl, html) {
+        const line = document.createElement('div');
+        line.innerHTML = html;
+        terminalEl.appendChild(line);
+        terminalEl.scrollTop = terminalEl.scrollHeight;
+    }
+
+    function renderAgentChecklist(completedAgents, runningAgent) {
+        const list = document.getElementById('progress-agent-checklist');
+        if (!list) return;
+        const completed = new Set(completedAgents || []);
+        const agents = [...new Set([...KNOWN_AGENTS.filter(a => completed.has(a) || a === runningAgent), ...completed])];
+        list.innerHTML = agents.slice(0, 12).map(agent => {
+            let icon = '⏳';
+            let cls = 'pending';
+            if (completed.has(agent)) { icon = '✓'; cls = 'done'; }
+            else if (agent === runningAgent) { icon = '⏳'; cls = 'running'; }
+            return `<li class="${cls}"><span>${icon}</span> ${escapeHtml(agent)}</li>`;
+        }).join('');
+    }
+
+    function startPolling() {
+        stopPolling();
+        pollTimer = setInterval(() => {
+            if (!scanActive && !document.hidden) fetchDashboardData();
+        }, POLL_INTERVAL_MS);
+    }
+
+    function stopPolling() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+    }
+
+    function handleScanEvent(data, ui) {
+        const { progressBarFill, progressStatusText, progressActiveAgent, progressTerminal, btnCloseProgress } = ui;
+
+        if (data.status === 'processing' || data.status === 'agent_completed') {
+            const pct = data.total > 0 ? Math.round((data.index / data.total) * 100) : 5;
+            progressBarFill.style.width = `${pct}%`;
+            progressStatusText.textContent = data.message;
+            if (data.agent) updateActiveAgentBadge(data.agent, progressActiveAgent);
+            renderAgentChecklist(data.agents_completed, data.agent);
+
+            if (data.status === 'processing') {
+                let spanClass = 'system';
+                if (data.agent && data.agent.includes('Generator')) spanClass = 'generator';
+                else if (data.agent && (data.agent.includes('Agent') || data.agent.includes('Jailbreaker') || data.agent.includes('Sniffer'))) spanClass = 'agent';
+                else if (data.agent && data.agent.includes('Judge')) spanClass = 'judge';
+                appendTerminalLine(progressTerminal, `<span class="${spanClass}">[${escapeHtml(data.agent)}]</span> ${escapeHtml(data.message)}`);
+            }
+        } else if (data.status === 'test_completed') {
+            const pct = Math.round((data.index / data.total) * 100);
+            progressBarFill.style.width = `${pct}%`;
+            const verdictClass = data.verdict === 'pass' ? 'success' : 'fail';
+            appendTerminalLine(progressTerminal, `<span class="${verdictClass}">[VERDICT: ${data.verdict.toUpperCase()}]</span> ${escapeHtml(data.reason)}`);
+
+            const newEval = {
+                scenario_id: data.scenario_id,
+                category: data.category,
+                overall: data.verdict,
+                reason: data.reason,
+                trace_id: data.trace_id,
+                user_message: data.user_message,
+                expected_behavior: data.expected_behavior
+            };
+            state.evaluations.push(newEval);
+            appendEvalRow(newEval);
+        } else if (data.status === 'complete') {
+            progressBarFill.style.width = '100%';
+            progressStatusText.textContent = 'All safety audits completed!';
+            renderAgentChecklist(data.agents_completed || [], null);
+            const scoreVal = data.release_score.overall_release_score;
+            const scoreClass = scoreVal >= 90 ? 'success' : (scoreVal >= 75 ? 'judge' : 'fail');
+            appendTerminalLine(progressTerminal, `<span class="system">[SYSTEM]</span> <span class="${scoreClass}">Scan finished. Release Readiness: ${scoreVal}% (${data.release_score.decision})</span>`);
+            btnCloseProgress.style.display = 'block';
+            scanActive = false;
+            startPolling();
+            fetchDashboardData();
+        } else if (data.status === 'error') {
+            appendTerminalLine(progressTerminal, `<span class="fail">[ERROR] ${escapeHtml(data.message)}</span>`);
+            btnCloseProgress.style.display = 'block';
+            scanActive = false;
+            startPolling();
+        }
+    }
+
+    function updateActiveAgentBadge(agent, progressActiveAgent) {
+        progressActiveAgent.innerHTML = `<i class="fa-solid fa-robot animate-pulse"></i> ${agent}`;
+        if (agent.includes('Generator')) {
+            progressActiveAgent.style.backgroundColor = 'rgba(192, 132, 252, 0.1)';
+            progressActiveAgent.style.color = '#c084fc';
+        } else if (agent.includes('AidAssist') || agent.includes('Agent') || agent.includes('Target') || agent.includes('Jailbreaker') || agent.includes('Sniffer')) {
+            progressActiveAgent.style.backgroundColor = 'rgba(96, 165, 250, 0.1)';
+            progressActiveAgent.style.color = '#60a5fa';
+        } else if (agent.includes('Judge')) {
+            progressActiveAgent.style.backgroundColor = 'rgba(234, 179, 8, 0.1)';
+            progressActiveAgent.style.color = '#eab308';
+        } else {
+            progressActiveAgent.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+            progressActiveAgent.style.color = '#38bdf8';
+        }
     }
 
     // ── Event Listeners ──────────────────────────────────────────────────
@@ -655,172 +808,135 @@ document.addEventListener('DOMContentLoaded', () => {
     btnRunTests.addEventListener('click', async () => {
         btnRunTests.disabled = true;
         btnRunTests.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing Agent...';
-        showLoadingState();
-        
-        // Clear evaluations visually and reset progress UI
+        scanActive = true;
+        stopPolling();
+
         state.evaluations = [];
         renderTestResults();
-        
+
         const modalProgress = document.getElementById('modal-progress');
         const progressBarFill = document.getElementById('progress-bar-fill');
         const progressStatusText = document.getElementById('progress-status-text');
         const progressActiveAgent = document.getElementById('progress-active-agent');
         const progressTerminal = document.getElementById('progress-terminal');
         const btnCloseProgress = document.getElementById('btn-close-progress');
-        
+
+        const ui = { progressBarFill, progressStatusText, progressActiveAgent, progressTerminal, btnCloseProgress };
+
         modalProgress.classList.add('open');
         progressBarFill.style.width = '0%';
         progressStatusText.textContent = 'Initializing scans...';
         btnCloseProgress.style.display = 'none';
-        progressTerminal.innerHTML = '<span class="system">[SYSTEM] Connecting to backend safety scans...</span>\n';
-        
+        progressTerminal.innerHTML = '';
+        appendTerminalLine(progressTerminal, '<span class="system">[SYSTEM] Connecting to backend safety scans...</span>');
+        renderAgentChecklist([], 'Scan Orchestrator');
+
         try {
             const projectId = document.getElementById('input-project-id').value.trim();
             const locationVal = document.getElementById('input-location').value.trim();
             const selectTarget = document.getElementById('select-target-agent');
             const selectedOption = selectTarget ? selectTarget.options[selectTarget.selectedIndex] : null;
-            const targetAgentIdVal = (selectTarget && selectTarget.value === 'custom') ? 
-                document.getElementById('input-agent-id').value.trim() : 
+            const targetAgentIdVal = (selectTarget && selectTarget.value === 'custom') ?
+                document.getElementById('input-agent-id').value.trim() :
                 (selectedOption ? selectedOption.getAttribute('data-agent-id') : '');
             const agentDescription = document.getElementById('input-agent-description').value.trim();
             const selectAttackVector = document.getElementById('select-attack-vector');
             const attackVector = selectAttackVector ? selectAttackVector.value : 'all';
-            
+
             const reqBody = {};
             if (projectId) reqBody.project_id = projectId;
             if (locationVal) reqBody.location = locationVal;
             if (targetAgentIdVal) reqBody.target_agent_id = targetAgentIdVal;
             if (agentDescription) reqBody.agent_description = agentDescription;
             if (attackVector) reqBody.attack_vector = attackVector;
-            
+
             const configStatusLabel = document.getElementById('config-status-label');
             if (projectId || locationVal || targetAgentIdVal || agentDescription || attackVector !== 'all') {
-                configStatusLabel.textContent = "Using Custom Configuration";
-                configStatusLabel.style.color = "var(--accent-blue)";
+                configStatusLabel.textContent = 'Using Custom Configuration';
+                configStatusLabel.style.color = 'var(--accent-blue)';
             } else {
-                configStatusLabel.textContent = "Using Environment Defaults";
-                configStatusLabel.style.color = "var(--text-secondary)";
+                configStatusLabel.textContent = 'Using Environment Defaults';
+                configStatusLabel.style.color = 'var(--text-secondary)';
             }
 
-            const res = await fetch(`${API_BASE}/run-test-suite`, { 
+            // Background job + SSE for immediate response and progressive updates
+            const createRes = await fetch(`${API_BASE}/scans`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(reqBody)
             });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.detail || res.statusText);
-            }
-            
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
-            
-            function updateActiveAgentBadge(agent) {
-                progressActiveAgent.innerHTML = `<i class="fa-solid fa-robot animate-pulse"></i> ${agent}`;
-                if (agent.includes("Generator")) {
-                    progressActiveAgent.style.backgroundColor = "rgba(192, 132, 252, 0.1)";
-                    progressActiveAgent.style.color = "#c084fc";
-                } else if (agent.includes("AidAssist") || agent.includes("Agent") || agent.includes("Target")) {
-                    progressActiveAgent.style.backgroundColor = "rgba(96, 165, 250, 0.1)";
-                    progressActiveAgent.style.color = "#60a5fa";
-                } else if (agent.includes("Judge")) {
-                    progressActiveAgent.style.backgroundColor = "rgba(234, 179, 8, 0.1)";
-                    progressActiveAgent.style.color = "#eab308";
-                } else {
-                    progressActiveAgent.style.backgroundColor = "rgba(56, 189, 248, 0.1)";
-                    progressActiveAgent.style.color = "#38bdf8";
-                }
+
+            if (!createRes.ok) {
+                const errorData = await createRes.json().catch(() => ({}));
+                throw new Error(errorData.detail || createRes.statusText);
             }
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // save incomplete line in buffer
-                
-                for (const line of lines) {
-                    if (!line.trim()) continue;
+            const { job_id, events_url } = await createRes.json();
+            appendTerminalLine(progressTerminal, `<span class="system">[SYSTEM] Job ${job_id} queued — streaming progress...</span>`);
+
+            let receivedEvent = false;
+            await new Promise((resolve, reject) => {
+                const source = new EventSource(events_url);
+
+                source.onmessage = (event) => {
+                    receivedEvent = true;
                     try {
-                        const data = JSON.parse(line);
-                        
-                        if (data.status === 'processing') {
-                            const pct = data.total > 0 ? Math.round((data.index / data.total) * 100) : 5;
-                            progressBarFill.style.width = `${pct}%`;
-                            progressStatusText.textContent = data.message;
-                            
-                            updateActiveAgentBadge(data.agent);
-                            
-                            let spanClass = 'system';
-                            if (data.agent.includes("Generator")) spanClass = 'generator';
-                            else if (data.agent.includes("AidAssist") || data.agent.includes("Agent")) spanClass = 'agent';
-                            else if (data.agent.includes("Judge")) spanClass = 'judge';
-                            
-                            progressTerminal.innerHTML += `<span class="${spanClass}">[${data.agent}]</span> ${escapeHtml(data.message)}\n`;
-                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
-                        } 
-                        else if (data.status === 'test_completed') {
-                            const pct = Math.round((data.index / data.total) * 100);
-                            progressBarFill.style.width = `${pct}%`;
-                            
-                            const isPass = data.verdict === 'pass';
-                            const verdictClass = isPass ? 'success' : 'fail';
-                            progressTerminal.innerHTML += `<span class="${verdictClass}">[VERDICT: ${data.verdict.toUpperCase()}]</span> ${escapeHtml(data.reason)}\n\n`;
-                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
-                            
-                            // Hydrate the test results table dynamically
-                            const newEval = {
-                                scenario_id: data.scenario_id,
-                                category: data.category,
-                                overall: data.verdict,
-                                reason: data.reason,
-                                trace_id: data.trace_id,
-                                user_message: data.user_message,
-                                expected_behavior: data.expected_behavior
-                            };
-                            
-                            // If first scenario, clear the mock empty state row
-                            if (state.evaluations.length === 0) {
-                                tbodyTestResults.innerHTML = '';
-                            }
-                            
-                            state.evaluations.push(newEval);
-                            renderTestResults();
-                        } 
-                        else if (data.status === 'complete') {
-                            progressBarFill.style.width = '100%';
-                            progressStatusText.textContent = 'All safety audits completed!';
-                            
-                            const scoreVal = data.release_score.overall_release_score;
-                            const scoreClass = scoreVal >= 90 ? 'success' : (scoreVal >= 75 ? 'judge' : 'fail');
-                            
-                            progressTerminal.innerHTML += `<span class="system">[SYSTEM]</span> <span class="${scoreClass}">Scan finished. Release Readiness Score: ${scoreVal}% (${data.release_score.decision})</span>\n`;
-                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
-                            
-                            btnCloseProgress.style.display = 'block';
-                            fetchDashboardData();
-                        }
-                        else if (data.status === 'error') {
-                            progressTerminal.innerHTML += `<span class="fail">[ERROR] ${escapeHtml(data.message)}</span>\n`;
-                            progressTerminal.scrollTop = progressTerminal.scrollHeight;
-                            btnCloseProgress.style.display = 'block';
+                        const data = JSON.parse(event.data);
+                        handleScanEvent(data, ui);
+                        if (data.status === 'complete' || data.status === 'error') {
+                            source.close();
+                            resolve();
                         }
                     } catch (err) {
-                        console.error('Error parsing line:', err, line);
+                        console.error('SSE parse error:', err);
                     }
-                }
-            }
+                };
+
+                source.onerror = () => {
+                    source.close();
+                    if (receivedEvent) {
+                        resolve();
+                        return;
+                    }
+                    runLegacyScanStream(reqBody, ui).then(resolve).catch(reject);
+                };
+            });
         } catch (error) {
             console.error('Error running test suite:', error);
             alert(`Test run failed: ${error.message}`);
+            scanActive = false;
+            startPolling();
         } finally {
             btnRunTests.disabled = false;
             btnRunTests.innerHTML = '<i class="fa-solid fa-play"></i> Run Safety Tests';
         }
     });
+
+    async function runLegacyScanStream(reqBody, ui) {
+        const res = await fetch(`${API_BASE}/run-test-suite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqBody)
+        });
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.detail || res.statusText);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                handleScanEvent(JSON.parse(line), ui);
+            }
+        }
+    }
 
     // Reset Dashboard Action
     const btnReset = document.getElementById('btn-reset');
@@ -889,8 +1005,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    searchTestsInput.addEventListener('input', renderTestResults);
-    
     // Tab Toggles for Live Log Feed
     tabRequests.addEventListener('click', () => {
         tabRequests.classList.add('active');
@@ -934,11 +1048,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial load
+    // Event delegation for trace buttons (avoids re-attaching listeners on re-render)
+    tbodyTestResults.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-view-trace');
+        if (!btn) return;
+        const scenarioId = btn.dataset.id;
+        const evalRecord = state.evaluations.find(x => x.scenario_id === scenarioId);
+        if (evalRecord) {
+            openTraceModal(scenarioId, evalRecord.category, evalRecord.overall, evalRecord.reason, evalRecord.trace_id);
+        }
+    });
+
+    let searchDebounceTimer = null;
+    searchTestsInput.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => renderTestResults(), 200);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !scanActive) fetchDashboardData();
+    });
+
+    // Initial load + smart polling (paused during scans, slower interval)
     fetchDashboardData();
-    
-    // Auto refresh every 5 seconds for simulated dashboard updates
-    setInterval(() => {
-        fetchDashboardData();
-    }, 5000);
+    startPolling();
 });

@@ -337,245 +337,114 @@ class RunTestSuiteRequest(BaseModel):
 
 @router.post("/run-test-suite", summary="Run automated safety test suite", operation_id="run_test_suite")
 async def api_run_test_suite(req: RunTestSuiteRequest = None):
-    """Run all adversarial scenarios against the live AidAssist agent via Reasoning Engine API,
-    evaluate the responses, and save the results to the database and Phoenix."""
+    """Run all adversarial scenarios (streaming NDJSON). Uses parallel scan engine."""
     from fastapi.responses import StreamingResponse
-    from tools.scenario_generator import generate_scenarios_via_cx
+    from tools.scan_engine import run_scan_stream
     import asyncio
-    import time
-    import uuid
-    
+
     if req is None:
         req = RunTestSuiteRequest()
 
+    params = {
+        "project_id": req.project_id,
+        "location": req.location,
+        "engine_id": req.engine_id,
+        "target_agent_id": req.target_agent_id,
+        "agent_description": req.agent_description,
+        "attack_vector": req.attack_vector or "all",
+    }
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def emit(event: dict) -> None:
+        await queue.put(event)
+
     async def event_generator():
-        scenarios = []
-        agent_display_map = {
-            "aidassist": "AidAssist",
-            "hr_assistant": "HR Assistant",
-            "it_helpdesk": "IT Helpdesk",
-            "finance_advisor": "Finance Advisor"
-        }
-        target_id_str = req.target_agent_id or "aidassist"
-        agent_display_name = agent_display_map.get(target_id_str)
-        if not agent_display_name:
-            if len(target_id_str) > 15:
-                agent_display_name = f"Custom ({target_id_str[:8]})"
-            else:
-                agent_display_name = target_id_str
-        # 1. Generate dynamic scenarios if description is provided
-        if req.agent_description and req.agent_description.strip():
-            yield json.dumps({
-                "status": "processing",
-                "index": 0,
-                "total": 12,
-                "scenario_id": "setup",
-                "category": "setup",
-                "agent": "Red-Team Generator",
-                "message": "Generating custom adversarial safety scenarios tailored to target agent description..."
-            }) + "\n"
-            await asyncio.sleep(0.1)
+        task = asyncio.create_task(run_scan_stream(params, emit))
+
+        while True:
+            if task.done() and queue.empty():
+                break
             try:
-                scenarios = generate_scenarios_via_cx(req.agent_description, req.attack_vector)
-            except Exception as e:
-                logger.error(f"Error generating dynamic scenarios: {e}")
-                
-            if not scenarios:
-                yield json.dumps({
-                    "status": "processing",
-                    "index": 0,
-                    "total": 26,
-                    "scenario_id": "setup",
-                    "category": "setup",
-                    "agent": "System",
-                    "message": "Dynamic scenario generation failed or skipped. Falling back to default static scenarios..."
-                }) + "\n"
-                await asyncio.sleep(0.1)
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                yield json.dumps(event) + "\n"
+                if event.get("status") in ("complete", "error"):
+                    break
+            except asyncio.TimeoutError:
+                if task.done():
+                    break
 
-        # Fallback to static scenarios
-        if not scenarios:
-            try:
-                scenarios_data = await api_load_scenarios()
-                scenarios = scenarios_data.get("scenarios", [])
-            except Exception as e:
-                logger.error(f"Error loading static scenarios: {e}")
-
-        total = len(scenarios)
-        if not scenarios:
-            yield json.dumps({"status": "error", "message": "Failed to load safety audit scenarios."}) + "\n"
-            return
-
-        all_scores = []
-        for idx, scenario in enumerate(scenarios):
-            scenario_id = scenario.get("scenario_id")
-            category = scenario.get("category", "")
-            user_message = scenario.get("user_message", "")
-            
-            # Yield Red-Team Gen active
-            yield json.dumps({
-                "status": "processing",
-                "index": idx + 1,
-                "total": total,
-                "scenario_id": scenario_id,
-                "category": category,
-                "agent": "Red-Team Generator",
-                "message": f"[{idx+1}/{total}] Generated attack vector: '{user_message[:50]}...'"
-            }) + "\n"
-            await asyncio.sleep(0.05)
-            
-            # Yield Target Agent active
-            yield json.dumps({
-                "status": "processing",
-                "index": idx + 1,
-                "total": total,
-                "scenario_id": scenario_id,
-                "category": category,
-                "agent": f"Target Agent ({agent_display_name})",
-                "message": f"[{idx+1}/{total}] Executing exploit attempt against target agent via API..."
-            }) + "\n"
-            
-            # Capture tool calls made during this sequential request and trace with OpenTelemetry
-            from opentelemetry import trace
-            
-            # Use the Phoenix-configured tracer provider if available,
-            # otherwise fall back to the global (possibly no-op) provider
-            tp = get_tracer_provider()
-            if tp:
-                otel_tracer = tp.get_tracer("agent-sentinel")
-            else:
-                otel_tracer = trace.get_tracer("agent-sentinel")
-            
-            trace_id = None
-            local_spans = []
-            scenario_start = time.perf_counter()
-            with otel_tracer.start_as_current_span("run_test_scenario") as span:
-                span.set_attribute("input.value", user_message)
-                span.set_attribute("scenario_id", scenario_id)
-                span.set_attribute("category", category)
-                span.set_attribute("openinference.span.kind", "CHAIN")
-                
-                query_start = time.perf_counter()
-                agent_response = ""
-                tool_calls = []
-                with otel_tracer.start_as_current_span("query_reasoning_engine") as df_span:
-                    df_span.set_attribute("input.value", user_message)
-                    df_span.set_attribute("openinference.span.kind", "LLM")
-                    with tracker.capture(scenario_id):
-                        try:
-                            # Call live AidAssist agent via Dialogflow CX API
-                            agent_response = query_target_agent(
-                                text=user_message,
-                                project_id=req.project_id,
-                                location=req.location,
-                                agent_id=req.target_agent_id or req.engine_id
-                            )
-                        except Exception as e:
-                            logger.error(f"Failed to query agent for scenario {scenario_id}: {e}")
-                            agent_response = f"Agent failed to respond: {e}"
-                            df_span.record_exception(e)
-                            df_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                        tool_calls = tracker.captured_tool_calls
-                    df_span.set_attribute("output.value", agent_response)
-                query_duration_ms = int((time.perf_counter() - query_start) * 1000)
-                local_spans.append({
-                    "span_id": f"{scenario_id}-query",
-                    "name": "query_target_agent",
-                    "span_kind": "LLM",
-                    "status": "ERROR" if agent_response.startswith("Agent failed to respond:") else "OK",
-                    "duration_ms": query_duration_ms,
-                    "input": user_message,
-                    "output": agent_response,
-                    "error": agent_response.removeprefix("Agent failed to respond: ").strip()
-                    if agent_response.startswith("Agent failed to respond:") else None,
-                })
-                
-                # Log any captured tool calls as child spans under the parent run span
-                for tc_index, tc in enumerate(tool_calls, start=1):
-                    with otel_tracer.start_as_current_span(tc["name"]) as tc_span:
-                        tc_span.set_attribute("openinference.span.kind", "TOOL")
-                        tc_span.set_attribute("input.value", json.dumps(tc.get("arguments", {})))
-                        tc_span.set_attribute("output.value", "Webhook tool execution completed.")
-                    local_spans.append({
-                        "span_id": f"{scenario_id}-tool-{tc_index}",
-                        "name": tc.get("name", "tool_call"),
-                        "span_kind": "TOOL",
-                        "status": "OK",
-                        "duration_ms": None,
-                        "input": json.dumps(tc.get("arguments", {})),
-                        "output": "Webhook tool execution completed.",
-                        "error": None,
-                    })
-                
-                # Extract the 32-character hex trace ID
-                raw_trace_id = format(span.get_span_context().trace_id, "032x")
-                trace_id = raw_trace_id if raw_trace_id.strip("0") else f"local_{uuid.uuid4().hex}"
-
-            local_spans.insert(0, {
-                "span_id": f"{scenario_id}-run",
-                "name": "run_test_scenario",
-                "span_kind": "CHAIN",
-                "status": "OK",
-                "duration_ms": int((time.perf_counter() - scenario_start) * 1000),
-                "input": user_message,
-                "output": agent_response,
-                "error": None,
-            })
-            record_local_trace(trace_id, local_spans)
-
-            # Yield Eval Judge active
-            yield json.dumps({
-                "status": "processing",
-                "index": idx + 1,
-                "total": total,
-                "scenario_id": scenario_id,
-                "category": category,
-                "agent": "Eval Judge",
-                "message": f"[{idx+1}/{total}] Grading security/compliance rules and logging metrics..."
-            }) + "\n"
-            
-            # Score response
-            scores = score_agent_response(scenario, agent_response, tool_calls)
-            if trace_id:
-                scores["trace_id"] = trace_id
-            
-            # Save evaluation to DB & Arize Phoenix
-            await save_eval_result(scores)
-            all_scores.append(scores)
-            
-            # Yield test_completed event
-            yield json.dumps({
-                "status": "test_completed",
-                "index": idx + 1,
-                "total": total,
-                "scenario_id": scenario_id,
-                "category": category,
-                "trace_id": trace_id,
-                "user_message": scenario.get("user_message", ""),
-                "expected_behavior": scenario.get("expected_behavior", ""),
-                "verdict": scores.get("overall", "fail"),
-                "reason": scores.get("reason", ""),
-                "message": f"[{idx+1}/{total}] Scan finished. Verdict: {scores.get('overall', 'fail').upper()}"
-            }) + "\n"
-            await asyncio.sleep(0.05)
-            
-        # Calculate release-readiness score
-        release_score = calculate_release_score(all_scores)
-        
-        # Flush OpenTelemetry traces before returning, for serverless environments (Cloud Run/Vercel)
-        try:
-            tp = get_tracer_provider()
-            if tp and hasattr(tp, "force_flush"):
-                tp.force_flush(timeout_millis=2000)
-        except Exception as e:
-            logger.warning(f"Failed to flush OTEL traces: {e}")
-            
-        yield json.dumps({
-            "status": "complete",
-            "release_score": release_score,
-            "message": f"Safety audit completed! Final Release Readiness: {release_score.get('overall_release_score', 0.0)}%"
-        }) + "\n"
+        if not task.done():
+            await task
+        elif task.exception():
+            yield json.dumps({"status": "error", "message": str(task.exception())}) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+class CreateScanRequest(BaseModel):
+    project_id: str | None = None
+    location: str | None = None
+    engine_id: str | None = None
+    target_agent_id: str | None = None
+    agent_description: str | None = None
+    attack_vector: str | None = "all"
+
+
+@router.post("/scans", summary="Create background scan job", operation_id="create_scan")
+async def api_create_scan(req: CreateScanRequest = None):
+    """Create a scan job and return immediately. Poll or subscribe via SSE for progress."""
+    from tools.job_queue import job_queue
+
+    if req is None:
+        req = CreateScanRequest()
+
+    params = req.model_dump(exclude_none=True)
+    job = await job_queue.create_job(params)
+    return {
+        "job_id": job.job_id,
+        "status": job.status.value,
+        "events_url": f"/tools/scans/{job.job_id}/events",
+        "status_url": f"/tools/scans/{job.job_id}",
+    }
+
+
+@router.get("/scans/{job_id}", summary="Get scan job status", operation_id="get_scan_status")
+async def api_get_scan_status(job_id: str):
+    from tools.job_queue import job_queue
+
+    job = job_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Scan job not found")
+    return job.snapshot()
+
+
+@router.get("/scans/{job_id}/events", summary="Stream scan progress (SSE)", operation_id="scan_events")
+async def api_scan_events(job_id: str):
+    """Server-Sent Events stream for real-time scan progress."""
+    from fastapi.responses import StreamingResponse
+    from tools.job_queue import job_queue
+
+    job = job_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Scan job not found")
+
+    async def sse_generator():
+        async for event in job_queue.subscribe_events(job_id):
+            if event.get("status") == "heartbeat":
+                yield ": heartbeat\n\n"
+                continue
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/evaluations", summary="Get all test evaluation results", operation_id="get_evaluations")

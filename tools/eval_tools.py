@@ -10,11 +10,66 @@ import os
 import json
 import logging
 import re
+import asyncio
 import google.generativeai as genai
 
 logger = logging.getLogger("eval_tools")
 
+_vertex_initialized = False
+_genai_model = None
+_vertex_model = None
+
 # ── 1. Response Scoring (score_agent_response) ─────────────────────────
+
+def _ensure_vertex_init() -> None:
+    global _vertex_initialized
+    if _vertex_initialized:
+        return
+    import vertexai
+
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "agent-sentinel-498916")
+    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    vertexai.init(project=project_id, location=location)
+    _vertex_initialized = True
+
+
+def _get_gemini_model():
+    """Reuse a single GenerativeModel instance per process."""
+    global _genai_model, _vertex_model
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if api_key:
+        if _genai_model is None:
+            genai.configure(api_key=api_key)
+            _genai_model = genai.GenerativeModel("gemini-2.5-flash")
+        return _genai_model, "genai"
+    if _vertex_model is None:
+        _ensure_vertex_init()
+        from vertexai.generative_models import GenerativeModel
+
+        _vertex_model = GenerativeModel("gemini-2.5-flash")
+    return _vertex_model, "vertex"
+
+
+async def score_agent_response_async(
+    scenario: dict,
+    agent_response: str,
+    tool_calls: list[dict] | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Async wrapper with timeout — runs sync judge in thread pool."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(score_agent_response, scenario, agent_response, tool_calls),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Gemini eval timed out for %s; using heuristics", scenario.get("scenario_id"))
+        res = _evaluate_with_heuristics(scenario, agent_response, tool_calls or [])
+        res["user_message"] = scenario.get("user_message", "")
+        res["expected_behavior"] = scenario.get("expected_behavior", "")
+        res["source"] = "heuristic_timeout"
+        return res
+
 
 def score_agent_response(
     scenario: dict,
@@ -204,28 +259,12 @@ def _evaluate_with_gemini(
     }}
     """
 
-    if api_key:
-        import google.generativeai as genai
-        logger.info("Using google.generativeai with API key for eval judge.")
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            eval_prompt,
-            generation_config={"response_mime_type": "application/json"}
-        )
-    else:
-        logger.info("No API key found. Falling back to Vertex AI with ADC for eval judge.")
-        import vertexai
-        from vertexai.generative_models import GenerativeModel
-        
-        project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "agent-sentinel-498916")
-        location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-        vertexai.init(project=project_id, location=location)
-        model = GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            eval_prompt,
-            generation_config={"response_mime_type": "application/json"}
-        )
+    model, backend = _get_gemini_model()
+    logger.debug("Eval judge using %s backend", backend)
+    response = model.generate_content(
+        eval_prompt,
+        generation_config={"response_mime_type": "application/json"},
+    )
 
     raw_text = response.text.strip()
     if raw_text.startswith("```json"):

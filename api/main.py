@@ -13,6 +13,7 @@ Then open:
     http://localhost:8000/health → Health check
 """
 
+import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -30,6 +31,11 @@ load_dotenv()
 
 from api.routes import router
 from tools.phoenix_tools import setup_phoenix_tracing
+from tools.http_clients import close_http_clients
+from tools.job_queue import job_queue
+from tools.scan_engine import run_scan_job
+from tools.scenario_loader import load_all_scenarios
+from tools.cache import set_scenario_cache
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -45,16 +51,23 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize services on startup, clean up on shutdown."""
-    # Start MCP session manager (required for streamable HTTP)
     async with mcp_server.session_manager.run():
-        # ── Startup ──
         logger.info("=" * 60)
         logger.info("Agent Sentinel — Starting up")
         logger.info("=" * 60)
 
-        # Auto-initialize Phoenix tracing
         tracing_result = setup_phoenix_tracing()
         logger.info(f"Phoenix tracing: {tracing_result.get('status', 'unknown')}")
+
+        # Warm caches outside request path
+        try:
+            set_scenario_cache(await asyncio.to_thread(load_all_scenarios))
+            logger.info("Scenario cache preloaded")
+        except Exception as exc:
+            logger.warning("Scenario preload failed: %s", exc)
+
+        job_queue.set_scan_runner(run_scan_job)
+        await job_queue.start_worker()
 
         logger.info("All endpoints available at /tools/*")
         logger.info("MCP server at /mcp (Streamable HTTP)")
@@ -62,10 +75,11 @@ async def lifespan(app: FastAPI):
         logger.info("Dashboard at /")
         logger.info("=" * 60)
 
-        yield  # App is running
+        yield
 
-        # ── Shutdown ──
         logger.info("Agent Sentinel — Shutting down")
+        await job_queue.stop_worker()
+        await close_http_clients()
 
 
 # ── App ─────────────────────────────────────────────────────────────

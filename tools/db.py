@@ -9,18 +9,25 @@ import os
 import sqlite3
 import json
 import logging
+import threading
 
 logger = logging.getLogger("db")
 
 # Place database file in the project root directory
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "red_team.db"))
 
+_local = threading.local()
+
 
 def get_connection():
-    """Return a thread-safe connection to the SQLite database.
-    Since SQLite uses file locks, we open a new connection for each request/transaction."""
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.row_factory = sqlite3.Row  # Allows accessing columns by name
+    """Return a thread-local SQLite connection (reused per worker thread)."""
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        _local.conn = conn
     return conn
 
 
@@ -112,8 +119,19 @@ def init_db():
     except Exception as e:
         logger.warning(f"Could not enable WAL mode: {e}")
 
+    # Performance indexes for dashboard queries
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_evaluations_timestamp ON evaluations(timestamp DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_evaluations_category ON evaluations(category)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status)"
+    )
+
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
     logger.info("Database tables initialized successfully.")
 
 
@@ -140,7 +158,7 @@ def insert_aid_request(record: dict) -> None:
         ),
     )
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
 
 
 def get_aid_request(request_id: str) -> dict | None:
@@ -148,7 +166,6 @@ def get_aid_request(request_id: str) -> dict | None:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM aid_requests WHERE request_id = ?", (request_id,))
     row = cursor.fetchone()
-    conn.close()
     if row:
         return dict(row)
     return None
@@ -159,7 +176,6 @@ def get_all_aid_requests() -> list[dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM aid_requests ORDER BY created_at DESC")
     rows = cursor.fetchall()
-    conn.close()
     return [dict(row) for row in rows]
 
 
@@ -185,7 +201,7 @@ def insert_escalation_ticket(ticket: dict) -> None:
         ),
     )
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
 
 
 def get_all_escalation_tickets() -> list[dict]:
@@ -193,7 +209,6 @@ def get_all_escalation_tickets() -> list[dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM escalation_tickets ORDER BY created_at DESC")
     rows = cursor.fetchall()
-    conn.close()
     return [dict(row) for row in rows]
 
 
@@ -220,7 +235,7 @@ def insert_approval_request(req: dict) -> None:
         ),
     )
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
 
 
 def get_approval_request(approval_id: str) -> dict | None:
@@ -228,7 +243,6 @@ def get_approval_request(approval_id: str) -> dict | None:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,))
     row = cursor.fetchone()
-    conn.close()
     if row:
         return dict(row)
     return None
@@ -239,7 +253,6 @@ def get_pending_approvals() -> list[dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at DESC")
     rows = cursor.fetchall()
-    conn.close()
     return [dict(row) for row in rows]
 
 
@@ -248,7 +261,6 @@ def get_all_approvals() -> list[dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM approvals ORDER BY created_at DESC")
     rows = cursor.fetchall()
-    conn.close()
     return [dict(row) for row in rows]
 
 
@@ -265,7 +277,7 @@ def update_approval_status(approval_id: str, status: str, approved_at: str = Non
     )
     rowcount = cursor.rowcount
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
     return rowcount > 0
 
 
@@ -303,7 +315,7 @@ def insert_evaluation(record: dict) -> None:
         ),
     )
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
 
 
 def get_all_evaluations() -> list[dict]:
@@ -312,7 +324,7 @@ def get_all_evaluations() -> list[dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM evaluations ORDER BY timestamp DESC, scenario_id ASC")
     rows = cursor.fetchall()
-    conn.close()
+    # Thread-local connection — do not close per operation
     
     # Format database rows back into nested dictionary structure expected by eval utilities
     results = []
@@ -347,7 +359,7 @@ def reset_db() -> None:
     cursor.execute("DELETE FROM escalation_tickets")
     cursor.execute("DELETE FROM aid_requests")
     conn.commit()
-    conn.close()
+    # Thread-local connection — do not close per operation
     logger.info("Database reset: cleared all tables.")
 
 

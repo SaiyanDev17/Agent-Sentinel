@@ -1,0 +1,55 @@
+# Cloud Run service configuration for Agent Sentinel
+# Deploy: gcloud run services replace deploy/cloudrun-service.yaml --region us-central1
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: agent-sentinel
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep one warm instance to reduce cold-start latency (~2-5s saved)
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+        # Allow concurrent requests per instance (I/O-bound scan API + dashboard)
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 3600
+      containers:
+        - image: gcr.io/PROJECT_ID/agent-sentinel:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              # Gemini + Dialogflow + OTEL; 2 vCPU recommended for SCAN_CONCURRENCY=4
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: SCAN_CONCURRENCY
+              value: "4"
+            - name: PHOENIX_EVAL_BATCH_SIZE
+              value: "5"
+            - name: DIALOGFLOW_TIMEOUT_SECONDS
+              value: "45"
+            - name: GEMINI_TIMEOUT_SECONDS
+              value: "30"
+            - name: CACHE_DEFAULT_TTL_SECONDS
+              value: "3600"
+            - name: EVAL_CACHE_TTL_SECONDS
+              value: "7200"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30

@@ -24,6 +24,7 @@ Tools:
 import os
 import json
 import logging
+import asyncio
 import httpx
 from datetime import datetime, timezone
 from collections import OrderedDict
@@ -62,8 +63,12 @@ _refresh_config()
 # Track whether tracing has been initialized
 _tracing_initialized = False
 _tracer_provider = None  # Store globally so routes.py can access it
+_phoenix_client = None
+_phoenix_client_lock = __import__("threading").Lock()
 _local_trace_cache: OrderedDict[str, dict] = OrderedDict()
 _LOCAL_TRACE_CACHE_LIMIT = 200
+_phoenix_eval_batch: list[dict] = []
+_PHOENIX_BATCH_SIZE = int(os.getenv("PHOENIX_EVAL_BATCH_SIZE", "5"))
 
 
 def record_local_trace(trace_id: str, spans: list[dict]) -> None:
@@ -189,47 +194,58 @@ def _phoenix_headers() -> dict:
 
 
 def _get_phoenix_client():
-    """Get a Phoenix Client instance (if available).
-
-    The Phoenix Python client provides higher-level operations
-    for datasets, experiments, and prompts.
-    For Cloud-hosted spaces, base_url must be the full space URL
-    e.g. https://app.phoenix.arize.com/s/developers-vitc
-    """
+    """Get a cached Phoenix Client instance (singleton per process)."""
+    global _phoenix_client
     _refresh_config()
-    try:
-        from phoenix.client import Client
-        client = Client(
-            base_url=PHOENIX_BASE_URL,  # must be space URL for cloud
-            api_key=PHOENIX_API_KEY or None,
-        )
-        return client
-    except Exception as e:
-        logger.warning(f"Could not create Phoenix client: {e}")
-        return None
+    if _phoenix_client is not None:
+        return _phoenix_client
+    with _phoenix_client_lock:
+        if _phoenix_client is not None:
+            return _phoenix_client
+        try:
+            from phoenix.client import Client
+
+            _phoenix_client = Client(
+                base_url=PHOENIX_BASE_URL,
+                api_key=PHOENIX_API_KEY or None,
+            )
+            return _phoenix_client
+        except Exception as e:
+            logger.warning(f"Could not create Phoenix client: {e}")
+            return None
 
 
 # ── 3. Trace Inspection Functions ───────────────────────────────────
 # These are what the Trace Investigator agent calls via MCP/API
 
 async def get_recent_traces(limit: int = 20) -> dict:
-    """Fetch recent traces from Arize Phoenix.
-
-    Args:
-        limit: Maximum number of traces to return.
-
-    Returns:
-        dict with list of recent traces and their summary info.
-    """
+    """Fetch recent traces from Arize Phoenix."""
     logger.info(f"Fetching recent {limit} traces from Phoenix")
     _refresh_config()
 
-    # Try using Phoenix client with get_spans_dataframe (most reliable method)
+    # Prefer local cache for recent scan traces (avoids full dataframe load)
+    if _local_trace_cache:
+        traces = []
+        for trace_id, data in reversed(list(_local_trace_cache.items())):
+            traces.append({
+                "trace_id": trace_id,
+                "status": "ERROR" if data.get("has_errors") else "OK",
+                "created_at": data.get("created_at", ""),
+                "name": f"trace_{trace_id[:8]}",
+                "span_count": data.get("span_count", 0),
+            })
+            if len(traces) >= limit:
+                break
+        if traces:
+            return {"traces": traces, "count": len(traces), "source": "local_cache"}
+
     client = _get_phoenix_client()
     if client:
         try:
-            import pandas as pd
-            df = client.spans.get_spans_dataframe(
+            import asyncio
+
+            df = await asyncio.to_thread(
+                client.spans.get_spans_dataframe,
                 project_identifier=PHOENIX_PROJECT_NAME,
             )
 
@@ -319,12 +335,13 @@ async def get_trace_details(trace_id: str) -> dict:
     if trace_id in _local_trace_cache:
         return _local_trace_cache[trace_id]
 
-    # Try Phoenix client with get_spans_dataframe
+    import asyncio
+
     client = _get_phoenix_client()
     if client:
         try:
-            import pandas as pd
-            df = client.spans.get_spans_dataframe(
+            df = await asyncio.to_thread(
+                client.spans.get_spans_dataframe,
                 project_identifier=PHOENIX_PROJECT_NAME,
             )
 
@@ -575,73 +592,81 @@ async def save_scenario_to_dataset(scenario: dict) -> dict:
 # ── 5. Evaluation & Experiment Functions ────────────────────────────
 
 async def save_eval_result(result: dict) -> dict:
-    """Save an evaluation score to Phoenix as span annotations.
+    """Save an evaluation score to SQLite and Phoenix (batched when possible)."""
+    import asyncio
 
-    Args:
-        result: Evaluation result with scores, trace_id, and scenario_id.
-
-    Returns:
-        dict with confirmation.
-    """
     logger.info(f"Saving eval result for scenario {result.get('scenario_id')}")
 
-    # Also save to local SQLite for the dashboard
     try:
-        from tools.db import insert_evaluation
-        insert_evaluation(result)
-        logger.info(f"Saved eval result to SQLite for scenario {result.get('scenario_id')}")
+        await asyncio.to_thread(_save_eval_to_sqlite, result)
     except Exception as e:
         logger.error(f"Failed to save evaluation to SQLite: {e}")
 
+    return await _queue_phoenix_eval(result)
+
+
+def _save_eval_to_sqlite(result: dict) -> None:
+    from tools.db import insert_evaluation
+
+    insert_evaluation(result)
+
+
+async def _queue_phoenix_eval(result: dict) -> dict:
+    """Batch Phoenix dataset writes to reduce API calls during scans."""
+    global _phoenix_eval_batch
+    _phoenix_eval_batch.append(result)
+    if len(_phoenix_eval_batch) < _PHOENIX_BATCH_SIZE:
+        return {
+            "status": "queued",
+            "eval_id": f"eval_{result.get('scenario_id', 'unknown')}",
+            "source": "batch_queue",
+        }
+    batch = _phoenix_eval_batch[:]
+    _phoenix_eval_batch = []
+    return await asyncio.to_thread(_flush_phoenix_eval_batch, batch)
+
+
+def flush_phoenix_eval_batch() -> None:
+    """Flush any pending Phoenix eval writes (call at end of scan)."""
+    global _phoenix_eval_batch
+    if _phoenix_eval_batch:
+        _flush_phoenix_eval_batch(_phoenix_eval_batch)
+        _phoenix_eval_batch = []
+
+
+def _flush_phoenix_eval_batch(batch: list[dict]) -> dict:
     client = _get_phoenix_client()
-    if client:
+    if not client:
+        return {"status": "saved", "source": "mock", "count": len(batch)}
+
+    try:
+        dataset_name = "red-team-evals"
         try:
-            # Phoenix evaluations are stored as span annotations
-            # For now, save as dataset examples in an evals dataset
-            dataset_name = "red-team-evals"
+            dataset = client.datasets.get_dataset(dataset=dataset_name)
+            dataset_id = dataset.get("id") or dataset.get("name")
+        except Exception:
+            dataset = client.datasets.create_dataset(
+                name=dataset_name,
+                dataset_description="Evaluation results from red-team testing",
+            )
+            dataset_id = dataset.get("id") or dataset.get("name")
 
-            try:
-                dataset = client.datasets.get_dataset(dataset=dataset_name)
-                client.datasets.add_examples_to_dataset(
-                    dataset=dataset.get("id") or dataset.get("name"),
-                    inputs=[{
-                        "scenario_id": result.get("scenario_id", ""),
-                        "category": result.get("category", ""),
-                    }],
-                    outputs=[{
-                        "scores": json.dumps(result.get("scores", {})),
-                        "overall": result.get("overall", ""),
-                        "reason": result.get("reason", ""),
-                    }],
-                )
-            except Exception:
-                dataset = client.datasets.create_dataset(
-                    name=dataset_name,
-                    dataset_description="Evaluation results from red-team testing",
-                    inputs=[{
-                        "scenario_id": result.get("scenario_id", ""),
-                        "category": result.get("category", ""),
-                    }],
-                    outputs=[{
-                        "scores": json.dumps(result.get("scores", {})),
-                        "overall": result.get("overall", ""),
-                        "reason": result.get("reason", ""),
-                    }],
-                )
-
-            return {
-                "status": "saved",
-                "eval_id": f"eval_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
-                "source": "phoenix_client",
-            }
-        except Exception as e:
-            logger.warning(f"Phoenix eval save failed: {e}")
-
-    return {
-        "status": "saved",
-        "eval_id": f"eval_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
-        "source": "mock",
-    }
+        client.datasets.add_examples_to_dataset(
+            dataset=dataset_id,
+            inputs=[{
+                "scenario_id": r.get("scenario_id", ""),
+                "category": r.get("category", ""),
+            } for r in batch],
+            outputs=[{
+                "scores": json.dumps(r.get("scores", {})),
+                "overall": r.get("overall", ""),
+                "reason": r.get("reason", ""),
+            } for r in batch],
+        )
+        return {"status": "saved", "source": "phoenix_client", "count": len(batch)}
+    except Exception as e:
+        logger.warning(f"Phoenix batch eval save failed: {e}")
+        return {"status": "saved", "source": "mock", "count": len(batch)}
 
 
 async def get_experiment_comparison(exp1_id: str, exp2_id: str) -> dict:
